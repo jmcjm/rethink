@@ -85,6 +85,44 @@ const STATES = [
     'auto_dt_open_pause'
 ]
 
+const COURSES: Record<number, string> = {
+    0x01: 'Cotton',
+    0x02: 'Cotton Eco',
+    0x03: 'Easy Care',
+    0x04: 'Delicates',
+    0x05: 'Duvet',
+    0x06: 'Wool',
+    0x07: 'Mixed',
+    0x08: 'Speed 14',
+    0x09: 'Rinse+Spin',
+    0x0A: 'Spin Only',
+    0x0B: 'Drum Clean',
+    0x3A: 'AI Wash',
+}
+
+const SPIN_RPM: Record<number, number | undefined> = {
+    0x00: 0,
+    0x01: 0,
+    0x02: 400,
+    0x03: 600,
+    0x04: 700,
+    0x05: 800,
+    0x06: 900,
+    0x07: 1000,
+    0x08: 1100,
+    0x09: 1200,
+}
+
+const TEMPS: Record<number, string> = {
+    0x00: 'off',
+    0x01: 'cold',
+    0x02: '20',
+    0x03: '30',
+    0x04: '40',
+    0x06: '60',
+    0x07: '95',
+}
+
 export default class Device extends AABBDevice {
     constructor(HA: Connection, thinq: Thinq2Device, meta: Metadata) {
         super(HA, 'device', thinq)
@@ -145,7 +183,43 @@ export default class Device extends AABBDevice {
                     device_class: 'duration',
                     unit_of_measurement: 'min',
                     name: 'Remaining time'
-                }
+                },
+                initial_time: {
+                    platform: 'sensor',
+                    unique_id: '$deviceid-initial_time',
+                    state_topic: '$this/initial_time',
+                    device_class: 'duration',
+                    unit_of_measurement: 'min',
+                    name: 'Total time'
+                },
+                course: {
+                    platform: 'sensor',
+                    unique_id: '$deviceid-course',
+                    state_topic: '$this/course',
+                    name: 'Program',
+                },
+                spin: {
+                    platform: 'sensor',
+                    unique_id: '$deviceid-spin',
+                    state_topic: '$this/spin',
+                    unit_of_measurement: 'rpm',
+                    name: 'Spin speed',
+                },
+                temperature: {
+                    platform: 'sensor',
+                    unique_id: '$deviceid-temperature',
+                    state_topic: '$this/temperature',
+                    name: 'Wash temperature',
+                },
+                energy: {
+                    platform: 'sensor',
+                    unique_id: '$deviceid-energy',
+                    state_topic: '$this/energy',
+                    device_class: 'energy',
+                    state_class: 'total_increasing',
+                    unit_of_measurement: 'Wh',
+                    name: 'Cycle energy',
+                },
             }
         }))
     }
@@ -156,48 +230,17 @@ export default class Device extends AABBDevice {
     }
 
     processAABB(buf: Buffer) {
-        if(buf.length === 53 && buf[0] == 0x20) {
-            //  0                   1                   2                   3                   4                   5
-            //  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2
-            // 200A0039000390000100EB0027ee0001002080010500040505000141428002ff000101000300710101010001010101010101000100
-            // ??????????????????????????????
-            //                               ..                                                                                state 01=INITIAL
-            //                                 ....                                                                            time remaining
-            //                                     ....                                                                        initial time HH:MM
-            //                                         ..                                                                      courseFL24inchBaseTitan
-            //                                           ..                                                                    error
-            //                                             ..                                                                  soilWash
-            //                                               ..                                                                spin
-            //                                                 ..                                                              temp
-            //                                                   ..                                                            rinse
-            //                                                     ..                                                          dryLevel
-            //                                                       ....                                                      reserve time HH:MM
-            //                                                           ..                                                    flags 1=turboWash 2=creaseCare 4=steamSoftener 8=ecoHybrid 10=medicRinse 20=rinseSpin 40=preWash 80=steam
-            //                                                             ..                                                  flags 1=initialBit 2=remoteStart 20=wrinkleCare 40=doorLock 80=childLock
-            //                                                               ..                                                flags 1=AIDDLed
-            //                                                                 ????
-            //                                                                     ..                                          preState
-            //                                                                       ..                                        smartCourseFL24inchBaseTitan
-            //                                                                         ..                                      cycle count
-            //                                                                           ..                                    
-            //                                                                             ..                                  downloadedCourseFL24inchBaseTitan
-            //                                                                               ??????
-            //                                                                                     ..                          standby
-            //                                                                                       ????
-            //                                                                                           ..                    ezCSDetergentSetVal
-            //                                                                                             ..                  ezCSSoftenerSetVal
-            //                                                                                               ..                ezDetergentAmount
-            //                                                                                                 ..              ezSoftenerAmount
-            //                                                                                                   ..            ezDispenseType
-            //                                                                                                     ..          flags 1=ezDetergentEmpty 2=ezSoftenerEmpty 4=ezDispenseDrawerOpen 8=ezDispenseNotationOz 10=ezLinkDetergentEmpty 20=ezDispenseSetting
-            //                                                                                                       ..        mlStep
-            //                                                                                                         ??      
+        if(buf[0] == 0x20 && buf[10] == 0xEC && buf.length >= 53) {
             const status = buf[15]
             const tremain = buf[16] * 60 + buf[17]
             const tinitial = buf[18] * 60 + buf[19]
-            const error = buf[21];
-            const flags1 = buf[30];
-            const cycles = buf[36];
+            const course = buf[20]
+            const error = buf[21]
+            const spin = buf[23]
+            const temp = buf[24]
+            const flags1 = buf[30]
+            const cycles = buf[36]
+            const energy = buf[44]
 
             this.publishProperty('power', status > 0 ? 'ON' : 'OFF')
             this.publishProperty('status', STATES[status] ?? 'unknown_status')
@@ -206,6 +249,11 @@ export default class Device extends AABBDevice {
             this.publishProperty('remote_start', (flags1 & 2) ? 'ON': 'OFF')
             this.publishProperty('door_lock', !(flags1 & 0x40) ? 'ON': 'OFF') // inverted logic, off=locked
             this.publishProperty('remaining_time', tremain)
+            this.publishProperty('initial_time', tinitial)
+            this.publishProperty('course', COURSES[course] ?? `unknown_${course.toString(16)}`)
+            this.publishProperty('spin', SPIN_RPM[spin] ?? spin * 100)
+            this.publishProperty('temperature', TEMPS[temp] ?? `${temp * 10}`)
+            this.publishProperty('energy', energy)
         }
     }
 
@@ -221,6 +269,9 @@ export default class Device extends AABBDevice {
                 // this op. is complex, it needs to supply the full configuration
                 console.warn('not supported yet')
             }
+
+            if(mqttValue === 'pause')
+                this.send(Buffer.from('F024040100', 'hex'))
 
             // this is actually 'pause'
             if(mqttValue === 'stop')
