@@ -11,6 +11,8 @@ export default class AABBDevice extends HADevice {
         thinq.on('data', (data) => this.processData(data))
     }
 
+    protected get thinqDevice() { return this.thinq }
+
     // sends a packet of the format:
     // AA [length] ...inner [checksum] BB
     send(inner: Buffer) {

@@ -434,3 +434,59 @@ describe('Device staged command flow', () => {
         expect(sent[0].toString('hex').toLowerCase()).toBe('aa08f02a010098bb')
     })
 })
+
+describe('Device raw_send topic', () => {
+    function mockInfra() {
+        const sent: Buffer[] = []
+        const mockHA: any = {
+            publishProperty: () => {},
+            publishConfig: () => {},
+            on: () => {},
+        }
+        const mockThinq: any = {
+            id: 'test-uuid',
+            meta: { modelName: 'test', swVersion: '1', modelId: 'Y_V8_Y___W.B32QEUK' },
+            send: (buf: Buffer) => sent.push(buf),
+            on: () => {},
+        }
+        return { mockHA, mockThinq, sent }
+    }
+
+    it('accepts valid framed hex and forwards to thinq unchanged', async () => {
+        const Device = (await import('./Y_V8_Y___W.B32QEUK.js')).default
+        const { mockHA, mockThinq, sent } = mockInfra()
+        const dev = new Device(mockHA, mockThinq, mockThinq.meta)
+
+        const hex = 'AA18F0250315070309020100000000000000000000000050BB'
+        dev.setProperty('raw_send', hex)
+        expect(sent.length).toBe(1)
+        expect(sent[0].toString('hex').toUpperCase()).toBe(hex.toUpperCase())
+    })
+
+    it('rejects hex with corrupted checksum', async () => {
+        const Device = (await import('./Y_V8_Y___W.B32QEUK.js')).default
+        const { mockHA, mockThinq, sent } = mockInfra()
+        const dev = new Device(mockHA, mockThinq, mockThinq.meta)
+
+        dev.setProperty('raw_send', 'AA18F0250315070309020100000000000000000000000000BB')
+        expect(sent.length).toBe(0)
+    })
+
+    it('rejects missing AA prefix', async () => {
+        const Device = (await import('./Y_V8_Y___W.B32QEUK.js')).default
+        const { mockHA, mockThinq, sent } = mockInfra()
+        const dev = new Device(mockHA, mockThinq, mockThinq.meta)
+
+        dev.setProperty('raw_send', '0018F025031507030902010000000000000000000000005 0BB')
+        expect(sent.length).toBe(0)
+    })
+
+    it('rejects non-hex garbage', async () => {
+        const Device = (await import('./Y_V8_Y___W.B32QEUK.js')).default
+        const { mockHA, mockThinq, sent } = mockInfra()
+        const dev = new Device(mockHA, mockThinq, mockThinq.meta)
+
+        dev.setProperty('raw_send', 'hello world')
+        expect(sent.length).toBe(0)
+    })
+})

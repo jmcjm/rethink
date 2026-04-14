@@ -744,6 +744,13 @@ export default class Device extends AABBDevice {
                     command_topic: '$this/turn_off_btn/press',
                     name: 'Turn off (F024)',
                 },
+                raw_send: {
+                    platform: 'text',
+                    unique_id: '$deviceid-raw_send',
+                    command_topic: '$this/raw_send/set',
+                    name: 'Raw hex send',
+                    pattern: '^[0-9a-fA-F]{8,400}$',
+                },
             }
         }))
     }
@@ -938,6 +945,20 @@ export default class Device extends AABBDevice {
         }
         if(prop === 'turn_off_btn') {
             this.send(buildF024TurnOff())
+            return
+        }
+        if(prop === 'raw_send') {
+            const hex = mqttValue.replace(/\s+/g, '')
+            if(!/^[0-9a-fA-F]+$/.test(hex)) return
+            if(hex.length < 8 || hex.length % 2 !== 0) return
+            const buf = Buffer.from(hex, 'hex')
+            if(buf[0] !== 0xAA || buf[buf.length - 1] !== 0xBB) return
+            // Checksum: sum of all bytes except the checksum byte and BB, mod 256, XOR 0x55.
+            let sum = 0
+            for(let i = 0; i < buf.length - 2; i++) sum += buf[i]
+            const expected = (sum & 0xFF) ^ 0x55
+            if(expected !== buf[buf.length - 2]) return
+            this.thinqDevice.send(buf)
             return
         }
     }
