@@ -172,6 +172,30 @@ export function parse53Byte(buf: Buffer): Parsed53 | null {
     }
 }
 
+export interface Parsed65 {
+    packet_type: '65_byte_short'
+    counter: number
+    model_name: string
+    param_flag: number
+    suffix_bytes: Buffer
+}
+
+export function parse65Byte(buf: Buffer): Parsed65 | null {
+    // After AABBDevice.processData strip: FULL=65 → INNER=61 bytes.
+    if(buf.length < 61) return null
+    if(buf[0] !== 0x20 || buf[1] !== 0x0a || buf[3] !== 0x41) return null
+
+    const modelName = buf.subarray(23, 23 + 18).toString('ascii').replace(/\0+$/, '')
+
+    return {
+        packet_type: '65_byte_short',
+        counter: buf[7],
+        model_name: modelName,
+        param_flag: buf[18],
+        suffix_bytes: buf.subarray(41),
+    }
+}
+
 export default class Device extends AABBDevice {
     constructor(HA: Connection, thinq: Thinq2Device, meta: Metadata) {
         super(HA, 'device', thinq)
@@ -281,7 +305,16 @@ export default class Device extends AABBDevice {
     processAABB(buf: Buffer) {
         const parsed53 = parse53Byte(buf)
         if(parsed53) { this.publishParsed53(parsed53); return }
-        // Dispatcher extended in later tasks (65/96/134/138-byte parsers)
+
+        const parsed65 = parse65Byte(buf)
+        if(parsed65) { this.publishParsed65(parsed65); return }
+
+        // Dispatcher extended in later tasks (96/134/138-byte parsers)
+    }
+
+    private publishParsed65(p: Parsed65) {
+        this.publishProperty('param_flag', p.param_flag)
+        this.publishProperty('model_name', p.model_name)
     }
 
     private publishParsed53(p: Parsed53) {

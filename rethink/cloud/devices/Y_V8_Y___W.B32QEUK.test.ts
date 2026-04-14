@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parse53Byte } from './Y_V8_Y___W.B32QEUK.js'
+import { parse53Byte, parse65Byte } from './Y_V8_Y___W.B32QEUK.js'
 
 describe('parse53Byte', () => {
     it('parses a constructed INITIAL status packet', () => {
@@ -70,5 +70,42 @@ describe('parse53Byte', () => {
         buf[24] = 0x02
         const parsed = parse53Byte(buf)
         expect(parsed!.spin).toBe('max')
+    })
+})
+
+describe('parse65Byte', () => {
+    it('parses a constructed 65-byte short status packet', () => {
+        // Minimal hand-built inner buffer (post-strip, 61 bytes)
+        const buf = Buffer.alloc(61)
+        buf[0] = 0x20
+        buf[1] = 0x0a
+        buf[3] = 0x41
+        buf[7] = 0xed  // counter
+        buf[18] = 0x01 // param_flag
+        // model name ASCII at [23..40]
+        Buffer.from('Y_V8_Y___W.B32QEUK', 'ascii').copy(buf, 23)
+
+        const parsed = parse65Byte(buf)
+        expect(parsed).not.toBeNull()
+        expect(parsed!.packet_type).toBe('65_byte_short')
+        expect(parsed!.counter).toBe(0xed)
+        expect(parsed!.model_name).toBe('Y_V8_Y___W.B32QEUK')
+        expect(parsed!.param_flag).toBe(0x01)
+    })
+
+    it('returns null when discriminator byte[3] does not match 0x41', () => {
+        const buf = Buffer.alloc(61)
+        buf[0] = 0x20
+        buf[1] = 0x0a
+        buf[3] = 0x39  // 53-byte signature
+        expect(parse65Byte(buf)).toBeNull()
+    })
+
+    it('returns null when buffer shorter than 61 bytes', () => {
+        const buf = Buffer.alloc(40)
+        buf[0] = 0x20
+        buf[1] = 0x0a
+        buf[3] = 0x41
+        expect(parse65Byte(buf)).toBeNull()
     })
 })
