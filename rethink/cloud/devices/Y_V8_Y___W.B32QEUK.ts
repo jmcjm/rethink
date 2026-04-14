@@ -226,6 +226,40 @@ export function parse96Byte(buf: Buffer): Parsed96 | null {
     }
 }
 
+export interface Parsed134 {
+    packet_type: '134_byte_counters'
+    counter_28: number
+    counter_29_30: number
+}
+
+export function parse134Byte(buf: Buffer): Parsed134 | null {
+    if(buf.length < 130) return null
+    if(buf[0] !== 0x20 || buf[1] !== 0x0a || buf[3] !== 0x86) return null
+    return {
+        packet_type: '134_byte_counters',
+        counter_28: buf[28],
+        counter_29_30: (buf[29] << 8) | buf[30],
+    }
+}
+
+export interface Parsed138 {
+    packet_type: '138_byte_diagnostic'
+    cycle_counter: number
+    cumulative_energy: number
+    sensor_temps: Buffer
+}
+
+export function parse138Byte(buf: Buffer): Parsed138 | null {
+    if(buf.length < 134) return null
+    if(buf[0] !== 0x20 || buf[1] !== 0x0a || buf[3] !== 0x8a) return null
+    return {
+        packet_type: '138_byte_diagnostic',
+        cycle_counter: buf[120],
+        cumulative_energy: (buf[91] << 8) | buf[92],
+        sensor_temps: buf.subarray(33, 43),
+    }
+}
+
 export default class Device extends AABBDevice {
     constructor(HA: Connection, thinq: Thinq2Device, meta: Metadata) {
         super(HA, 'device', thinq)
@@ -342,7 +376,25 @@ export default class Device extends AABBDevice {
         const parsed96 = parse96Byte(buf)
         if(parsed96) { this.publishParsed96(parsed96); return }
 
-        // Dispatcher extended in later tasks (134/138-byte parsers)
+        const parsed134 = parse134Byte(buf)
+        if(parsed134) { this.publishParsed134(parsed134); return }
+
+        const parsed138 = parse138Byte(buf)
+        if(parsed138) { this.publishParsed138(parsed138); return }
+
+        // Unknown packet type — log for later reverse-engineering (83/76/87/99/... observed in captures)
+        console.log(`[washer ${this.id}] unknown packet len=${buf.length} buf[3]=0x${buf[3]?.toString(16)} hex=${buf.toString('hex').slice(0, 48)}...`)
+    }
+
+    private publishParsed134(p: Parsed134) {
+        this.publishProperty('stat_counter_28', p.counter_28)
+        this.publishProperty('stat_counter_29_30', p.counter_29_30)
+    }
+
+    private publishParsed138(p: Parsed138) {
+        this.publishProperty('cycles_lifetime', p.cycle_counter)
+        this.publishProperty('energy_cumulative', p.cumulative_energy)
+        this.publishProperty('sensor_temps_raw', p.sensor_temps.toString('hex'))
     }
 
     private publishParsed65(p: Parsed65) {

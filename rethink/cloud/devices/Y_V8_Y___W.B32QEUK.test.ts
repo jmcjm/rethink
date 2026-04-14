@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parse53Byte, parse65Byte, parse96Byte } from './Y_V8_Y___W.B32QEUK.js'
+import { parse53Byte, parse65Byte, parse96Byte, parse134Byte, parse138Byte } from './Y_V8_Y___W.B32QEUK.js'
 
 describe('parse53Byte', () => {
     it('parses a constructed INITIAL status packet', () => {
@@ -149,5 +149,56 @@ describe('parse96Byte', () => {
         buf[1] = 0x0a
         buf[3] = 0x60
         expect(parse96Byte(buf)).toBeNull()
+    })
+})
+
+describe('parse134Byte', () => {
+    it('parses a constructed 134-byte counter packet', () => {
+        const buf = Buffer.alloc(130)
+        buf[0] = 0x20
+        buf[1] = 0x0a
+        buf[3] = 0x86
+        buf[28] = 0x82
+        buf[29] = 0x02
+        buf[30] = 0x46
+        const parsed = parse134Byte(buf)
+        expect(parsed).not.toBeNull()
+        expect(parsed!.packet_type).toBe('134_byte_counters')
+        expect(parsed!.counter_28).toBe(0x82)
+        expect(parsed!.counter_29_30).toBe(0x0246)
+    })
+
+    it('returns null when discriminator byte[3] does not match 0x86', () => {
+        const buf = Buffer.alloc(130)
+        buf[0] = 0x20
+        buf[1] = 0x0a
+        buf[3] = 0x60
+        expect(parse134Byte(buf)).toBeNull()
+    })
+})
+
+describe('parse138Byte', () => {
+    it('parses a constructed 138-byte diagnostic packet', () => {
+        const buf = Buffer.alloc(134)
+        buf[0] = 0x20
+        buf[1] = 0x0a
+        buf[3] = 0x8a
+        buf[120] = 203
+        buf[91] = 0x0D
+        buf[92] = 0x03
+        const parsed = parse138Byte(buf)
+        expect(parsed).not.toBeNull()
+        expect(parsed!.packet_type).toBe('138_byte_diagnostic')
+        expect(parsed!.cycle_counter).toBe(203)
+        expect(parsed!.cumulative_energy).toBe(0x0D03)
+        expect(parsed!.sensor_temps.length).toBe(10)
+    })
+
+    it('returns null when discriminator byte[3] does not match 0x8a', () => {
+        const buf = Buffer.alloc(134)
+        buf[0] = 0x20
+        buf[1] = 0x0a
+        buf[3] = 0x86
+        expect(parse138Byte(buf)).toBeNull()
     })
 })
