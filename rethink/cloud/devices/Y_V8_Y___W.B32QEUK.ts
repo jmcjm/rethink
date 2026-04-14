@@ -85,19 +85,21 @@ export const STATES = [
     'auto_dt_open_pause'
 ]
 
-export const COURSES: Record<number, string> = {
-    0x01: 'Cotton',
-    0x02: 'Cotton Eco',
-    0x03: 'Easy Care',
-    0x04: 'Delicates',
-    0x05: 'Duvet',
-    0x06: 'Wool',
-    0x07: 'Mixed',
-    0x08: 'Speed 14',
-    0x09: 'Rinse+Spin',
-    0x0A: 'Spin Only',
-    0x0B: 'Drum Clean',
-    0x3A: 'AI Wash',
+export // Course ID → display name. EU-model mapping per live capture 2026-04-14.
+// IDs marked (wiki) are from anszom/rethink wiki and not verified on this model.
+const COURSES: Record<number, string> = {
+    0x01: 'Cotton',              // wiki
+    0x02: 'Synthetics',          // verified EU model (wiki label was "Cotton Eco")
+    0x03: 'Easy Care',           // wiki
+    0x04: 'Delicates',           // wiki
+    0x05: 'Duvet',               // wiki
+    0x06: 'Wool',                // wiki
+    0x07: 'Mixed',               // verified
+    0x08: 'Speed 14',            // wiki
+    0x09: 'Rinse+Spin',          // wiki
+    0x0A: 'Spin Only',           // wiki
+    0x0B: 'Drum Clean',          // wiki
+    0x3A: 'AI Wash',             // wiki
 }
 
 export const SPIN_RPM: Record<number, number | undefined> = {
