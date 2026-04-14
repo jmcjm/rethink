@@ -9,6 +9,7 @@
         "target": "es6",
         "typeRoots": ["./types" ],
         "strictNullChecks": true,
+        "skipLibCheck": true,
     },
 
     "include": [ "./**/*.ts" ],

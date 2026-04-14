@@ -17,10 +17,10 @@
     "@types/express": "^5.0.6",
     "@types/node": "^24.10.1",
     "@types/ws": "^8.18.1",
-    "@vitest/coverage-v8": "^4.1.4",
+    "@vitest/coverage-v8": "^1.6.1",
     "tsx": "^3.14.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.4"
+    "vitest": "^1.6.1"
   },
   "scripts": {
     "build": "tsc && cp -r html dist/",
