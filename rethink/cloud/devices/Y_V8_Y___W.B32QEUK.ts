@@ -723,25 +723,25 @@ export default class Device extends AABBDevice {
                 set_program: {
                     platform: 'button',
                     unique_id: '$deviceid-set_program',
-                    command_topic: '$this/set_program/press',
+                    command_topic: '$this/set_program/set',
                     name: 'Set staged program (F025)',
                 },
                 start_program: {
                     platform: 'button',
                     unique_id: '$deviceid-start_program',
-                    command_topic: '$this/start_program/press',
+                    command_topic: '$this/start_program/set',
                     name: 'Start staged program (F026)',
                 },
                 power_toggle_btn: {
                     platform: 'button',
                     unique_id: '$deviceid-power_toggle_btn',
-                    command_topic: '$this/power_toggle_btn/press',
+                    command_topic: '$this/power_toggle_btn/set',
                     name: 'Power toggle (F02A)',
                 },
                 turn_off_btn: {
                     platform: 'button',
                     unique_id: '$deviceid-turn_off_btn',
-                    command_topic: '$this/turn_off_btn/press',
+                    command_topic: '$this/turn_off_btn/set',
                     name: 'Turn off (F024)',
                 },
                 raw_send: {
