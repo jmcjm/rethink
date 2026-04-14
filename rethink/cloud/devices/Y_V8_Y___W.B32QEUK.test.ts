@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parse53Byte, parse65Byte } from './Y_V8_Y___W.B32QEUK.js'
+import { parse53Byte, parse65Byte, parse96Byte } from './Y_V8_Y___W.B32QEUK.js'
 
 describe('parse53Byte', () => {
     it('parses a constructed INITIAL status packet', () => {
@@ -107,5 +107,47 @@ describe('parse65Byte', () => {
         buf[1] = 0x0a
         buf[3] = 0x41
         expect(parse65Byte(buf)).toBeNull()
+    })
+})
+
+describe('parse96Byte', () => {
+    it('extracts active program parameters from staged block at inner[62..67] + cc at inner[77]', () => {
+        const buf = Buffer.alloc(92)
+        buf[0] = 0x20
+        buf[1] = 0x0a
+        buf[3] = 0x60
+        // previous program at [20..25]
+        buf[20] = 0x07; buf[22] = 0x03; buf[23] = 0x07; buf[24] = 0x04; buf[25] = 0x01
+        // active/staged program at [62..67]
+        buf[62] = 0x07; buf[64] = 0x03; buf[65] = 0x09; buf[66] = 0x02; buf[67] = 0x01
+        // cc at [77]
+        buf[77] = 0xFF
+
+        const parsed = parse96Byte(buf)
+        expect(parsed).not.toBeNull()
+        expect(parsed!.packet_type).toBe('96_byte_extended')
+        expect(parsed!.active_program).toEqual({
+            program_id: 0x07,
+            spin: 0x09,
+            temp: 0x02,
+            rinse: 0x01,
+            cc: 0xFF,
+        })
+    })
+
+    it('returns null when discriminator byte[3] does not match 0x60', () => {
+        const buf = Buffer.alloc(92)
+        buf[0] = 0x20
+        buf[1] = 0x0a
+        buf[3] = 0x41
+        expect(parse96Byte(buf)).toBeNull()
+    })
+
+    it('returns null when buffer shorter than 92 bytes', () => {
+        const buf = Buffer.alloc(60)
+        buf[0] = 0x20
+        buf[1] = 0x0a
+        buf[3] = 0x60
+        expect(parse96Byte(buf)).toBeNull()
     })
 })

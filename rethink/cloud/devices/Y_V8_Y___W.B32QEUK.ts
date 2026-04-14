@@ -196,6 +196,36 @@ export function parse65Byte(buf: Buffer): Parsed65 | null {
     }
 }
 
+export interface Parsed96 {
+    packet_type: '96_byte_extended'
+    active_program: {
+        program_id: number
+        spin: number
+        temp: number
+        rinse: number
+        cc: number
+    }
+}
+
+export function parse96Byte(buf: Buffer): Parsed96 | null {
+    // FULL=96 → INNER=92 bytes after AABBDevice strip.
+    // Layout from session capture 2026-04-13: staged program echoed at inner[62..67],
+    // cc at inner[77]. Q-item: re-verify offsets with more captures.
+    if(buf.length < 92) return null
+    if(buf[0] !== 0x20 || buf[1] !== 0x0a || buf[3] !== 0x60) return null
+
+    return {
+        packet_type: '96_byte_extended',
+        active_program: {
+            program_id: buf[62],
+            spin: buf[65],
+            temp: buf[66],
+            rinse: buf[67],
+            cc: buf[77],
+        },
+    }
+}
+
 export default class Device extends AABBDevice {
     constructor(HA: Connection, thinq: Thinq2Device, meta: Metadata) {
         super(HA, 'device', thinq)
@@ -309,12 +339,25 @@ export default class Device extends AABBDevice {
         const parsed65 = parse65Byte(buf)
         if(parsed65) { this.publishParsed65(parsed65); return }
 
-        // Dispatcher extended in later tasks (96/134/138-byte parsers)
+        const parsed96 = parse96Byte(buf)
+        if(parsed96) { this.publishParsed96(parsed96); return }
+
+        // Dispatcher extended in later tasks (134/138-byte parsers)
     }
 
     private publishParsed65(p: Parsed65) {
         this.publishProperty('param_flag', p.param_flag)
         this.publishProperty('model_name', p.model_name)
+    }
+
+    private publishParsed96(p: Parsed96) {
+        const ap = p.active_program
+        this.publishProperty('active_program_id', `0x${ap.program_id.toString(16).padStart(2,'0')}`)
+        this.publishProperty('active_program_name', COURSES[ap.program_id] ?? `unknown_${ap.program_id.toString(16)}`)
+        this.publishProperty('active_spin', SPIN_RPM[ap.spin] ?? (ap.spin === 0xFF ? 'max' : ap.spin * 100))
+        this.publishProperty('active_temp', TEMPS[ap.temp] ?? `${ap.temp}`)
+        this.publishProperty('active_rinse', ap.rinse)
+        this.publishProperty('active_cc', `0x${ap.cc.toString(16).padStart(2,'0')}`)
     }
 
     private publishParsed53(p: Parsed53) {
