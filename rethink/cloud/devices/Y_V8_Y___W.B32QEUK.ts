@@ -670,12 +670,153 @@ export default class Device extends AABBDevice {
                     name: 'Stat counter 29-30',
                     entity_category: 'diagnostic',
                 },
+                stage_program: {
+                    platform: 'select',
+                    unique_id: '$deviceid-stage_program',
+                    state_topic: '$this/stage_program',
+                    command_topic: '$this/stage_program/set',
+                    name: 'Staged: Program',
+                    options: Object.values(COURSES),
+                },
+                stage_spin: {
+                    platform: 'select',
+                    unique_id: '$deviceid-stage_spin',
+                    state_topic: '$this/stage_spin',
+                    command_topic: '$this/stage_spin/set',
+                    name: 'Staged: Spin',
+                    options: ['no_spin', '400', '600', '700', '800', '900', '1000', '1100', '1200', 'max'],
+                },
+                stage_temp: {
+                    platform: 'select',
+                    unique_id: '$deviceid-stage_temp',
+                    state_topic: '$this/stage_temp',
+                    command_topic: '$this/stage_temp/set',
+                    name: 'Staged: Temp',
+                    options: ['cold', '20', '30', '40', '60', '95'],
+                },
+                stage_rinse: {
+                    platform: 'select',
+                    unique_id: '$deviceid-stage_rinse',
+                    state_topic: '$this/stage_rinse',
+                    command_topic: '$this/stage_rinse/set',
+                    name: 'Staged: Rinse',
+                    options: ['normal', 'rinse_plus'],
+                },
+                stage_cc: {
+                    platform: 'text',
+                    unique_id: '$deviceid-stage_cc',
+                    state_topic: '$this/stage_cc',
+                    command_topic: '$this/stage_cc/set',
+                    name: 'Staged: Custom course (hex)',
+                    pattern: '^[0-9a-fA-F]{1,2}$',
+                },
+                stage_delay: {
+                    platform: 'number',
+                    unique_id: '$deviceid-stage_delay',
+                    state_topic: '$this/stage_delay',
+                    command_topic: '$this/stage_delay/set',
+                    name: 'Staged: Delay (hours)',
+                    min: 0,
+                    max: 19,
+                    step: 1,
+                },
+                set_program: {
+                    platform: 'button',
+                    unique_id: '$deviceid-set_program',
+                    command_topic: '$this/set_program/press',
+                    name: 'Set staged program (F025)',
+                },
+                start_program: {
+                    platform: 'button',
+                    unique_id: '$deviceid-start_program',
+                    command_topic: '$this/start_program/press',
+                    name: 'Start staged program (F026)',
+                },
+                power_toggle_btn: {
+                    platform: 'button',
+                    unique_id: '$deviceid-power_toggle_btn',
+                    command_topic: '$this/power_toggle_btn/press',
+                    name: 'Power toggle (F02A)',
+                },
+                turn_off_btn: {
+                    platform: 'button',
+                    unique_id: '$deviceid-turn_off_btn',
+                    command_topic: '$this/turn_off_btn/press',
+                    name: 'Turn off (F024)',
+                },
             }
         }))
     }
 
+    private staged: {
+        program?: string
+        spin?: string
+        temp?: string
+        rinse?: string
+        cc?: string
+        delay?: number
+    } = {}
+
+    private programNameToId(name: string): number | undefined {
+        for(const [id, n] of Object.entries(COURSES)) {
+            if(n === name) return Number(id)
+        }
+        return undefined
+    }
+
+    private spinStringToByte(s: string): number {
+        if(s === 'no_spin') return 0x01
+        if(s === 'max') return 0xFF
+        const rpm = Number(s)
+        for(const [b, r] of Object.entries(SPIN_RPM)) {
+            if(r === rpm) return Number(b)
+        }
+        return 0x07
+    }
+
+    private tempStringToByte(s: string): number {
+        if(s === 'cold') return 0x01
+        for(const [b, t] of Object.entries(TEMPS)) {
+            if(t === s) return Number(b)
+        }
+        return 0x02
+    }
+
+    private rinseStringToByte(s: string): number {
+        if(s === 'rinse_plus') return 0x02
+        return 0x01
+    }
+
+    private stagedToF025Params(): F025Params | null {
+        const s = this.staged
+        if(!s.program) return null
+        const program_id = this.programNameToId(s.program)
+        if(program_id === undefined) return null
+        return {
+            program_id,
+            spin: this.spinStringToByte(s.spin ?? '1000'),
+            temp: this.tempStringToByte(s.temp ?? 'cold'),
+            rinse: this.rinseStringToByte(s.rinse ?? 'normal'),
+            cc: s.cc ? parseInt(s.cc, 16) : 0,
+        }
+    }
+
+    private stagedToF026Params(): F026Params | null {
+        const s = this.staged
+        if(!s.program) return null
+        const program_id = this.programNameToId(s.program)
+        if(program_id === undefined) return null
+        return {
+            program_id,
+            spin: this.spinStringToByte(s.spin ?? '1000'),
+            temp: this.tempStringToByte(s.temp ?? 'cold'),
+            rinse: this.rinseStringToByte(s.rinse ?? 'normal'),
+            delay: s.delay ?? 0,
+        }
+    }
+
     start() {
-        // this is only *slightly* different to the init string for the fridge                       
+        // this is only *slightly* different to the init string for the fridge
         this.send(Buffer.from('F0ED1121010000001800', 'hex'))
     }
 
@@ -752,30 +893,52 @@ export default class Device extends AABBDevice {
     }
 
     setProperty(prop: string, mqttValue: string) {
+        // Power OFF
         if(prop === 'power' && mqttValue === 'OFF') {
-            // only power-off is supported
-            this.send(Buffer.from('f024010100', 'hex'))
+            this.send(buildF024TurnOff())
+            return
         }
 
+        // Operation select (pause/stop/power_off/wake_up)
         if(prop === 'operation') {
-            // options: [ 'start', 'stop', 'power_off', 'wake_up' ]
-            if(mqttValue === 'start') {
-                // this op. is complex, it needs to supply the full configuration
-                console.warn('not supported yet')
+            if(mqttValue === 'pause' || mqttValue === 'stop') {
+                this.send(Buffer.from('F024040100', 'hex'))
             }
+            if(mqttValue === 'power_off') this.send(buildF024TurnOff())
+            if(mqttValue === 'wake_up') this.send(buildF02APowerToggle())
+            return
+        }
 
-            if(mqttValue === 'pause')
-                this.send(Buffer.from('F024040100', 'hex'))
+        // Staged values — cache and echo to state_topic so HA UI reflects current selection
+        if(prop.startsWith('stage_')) {
+            const key = prop.slice('stage_'.length)
+            if(key === 'delay') {
+                this.staged.delay = Number(mqttValue)
+            } else {
+                (this.staged as any)[key] = mqttValue
+            }
+            this.HA.publishProperty(this.id, prop, mqttValue)
+            return
+        }
 
-            // this is actually 'pause'
-            if(mqttValue === 'stop')
-                this.send(Buffer.from('F024040100', 'hex'))
-
-            if(mqttValue === 'power_off')
-                this.send(Buffer.from('f024010100', 'hex'))
-
-            if(mqttValue === 'wake_up')
-                this.send(Buffer.from('F02A0100', 'hex'))
+        // Button handlers — build & send packets from staged cache
+        if(prop === 'set_program') {
+            const params = this.stagedToF025Params()
+            if(params) this.send(buildF025Set(params))
+            return
+        }
+        if(prop === 'start_program') {
+            const params = this.stagedToF026Params()
+            if(params) this.send(buildF026Start(params))
+            return
+        }
+        if(prop === 'power_toggle_btn') {
+            this.send(buildF02APowerToggle())
+            return
+        }
+        if(prop === 'turn_off_btn') {
+            this.send(buildF024TurnOff())
+            return
         }
     }
 }

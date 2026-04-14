@@ -370,3 +370,67 @@ describe('buildF024TurnOff', () => {
         expect(buildF024TurnOff().toString('hex').toLowerCase()).toBe('f024010100')
     })
 })
+
+describe('Device staged command flow', () => {
+    function mockInfra() {
+        const sent: Buffer[] = []
+        const published: Array<[string, string, any]> = []
+        const mockHA: any = {
+            publishProperty: (id: string, prop: string, value: any) => published.push([id, prop, value]),
+            publishConfig: () => {},
+            on: () => {},
+        }
+        const mockThinq: any = {
+            id: 'test-uuid',
+            meta: { modelName: 'test', swVersion: '1', modelId: 'Y_V8_Y___W.B32QEUK' },
+            send: (buf: Buffer) => sent.push(buf),
+            on: () => {},
+        }
+        return { mockHA, mockThinq, sent, published }
+    }
+
+    it('staging selects + set_program press builds F025 with staged values', async () => {
+        const Device = (await import('./Y_V8_Y___W.B32QEUK.js')).default
+        const { mockHA, mockThinq, sent } = mockInfra()
+        const dev = new Device(mockHA, mockThinq, mockThinq.meta)
+
+        dev.setProperty('stage_program', 'Mixed')
+        dev.setProperty('stage_spin', '1200')
+        dev.setProperty('stage_temp', '20')
+        dev.setProperty('stage_rinse', 'normal')
+        dev.setProperty('set_program', 'PRESS')
+
+        expect(sent.length).toBe(1)
+        const full = sent[0]
+        expect(full[0]).toBe(0xAA)
+        expect(full[full.length - 1]).toBe(0xBB)
+        const innerHex = full.subarray(2, 2 + 20).toString('hex')
+        expect(innerHex).toBe('f025031507030902010000000000000000000000')
+    })
+
+    it('start_program press builds F026 with staged values', async () => {
+        const Device = (await import('./Y_V8_Y___W.B32QEUK.js')).default
+        const { mockHA, mockThinq, sent } = mockInfra()
+        const dev = new Device(mockHA, mockThinq, mockThinq.meta)
+
+        dev.setProperty('stage_program', 'Mixed')
+        dev.setProperty('stage_spin', '1200')
+        dev.setProperty('stage_temp', '20')
+        dev.setProperty('stage_rinse', 'normal')
+        dev.setProperty('start_program', 'PRESS')
+
+        expect(sent.length).toBe(1)
+        const innerHex = sent[0].subarray(2, 2 + 18).toString('hex')
+        expect(innerHex).toBe('f02607030902010000000000000300000000')
+    })
+
+    it('power_toggle_btn press builds F02A', async () => {
+        const Device = (await import('./Y_V8_Y___W.B32QEUK.js')).default
+        const { mockHA, mockThinq, sent } = mockInfra()
+        const dev = new Device(mockHA, mockThinq, mockThinq.meta)
+
+        dev.setProperty('power_toggle_btn', 'PRESS')
+        expect(sent.length).toBe(1)
+        expect(sent[0].toString('hex').toLowerCase()).toBe('aa08f02a010098bb')
+    })
+})
