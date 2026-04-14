@@ -17,12 +17,17 @@
     "@types/express": "^5.0.6",
     "@types/node": "^24.10.1",
     "@types/ws": "^8.18.1",
+    "@vitest/coverage-v8": "^4.1.4",
     "tsx": "^3.14.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.4"
   },
   "scripts": {
     "build": "tsc && cp -r html dist/",
     "dev": "tsx rethink-cloud.ts",
-    "start": "node dist/rethink-cloud.js"
+    "start": "node dist/rethink-cloud.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   }
 }
