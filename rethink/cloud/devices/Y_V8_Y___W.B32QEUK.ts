@@ -62,7 +62,7 @@ const ERRORS = [
     'ED5_error',
 ]
 
-const STATES = [
+export const STATES = [
     'power_off',
     'initial',
     'pause',
@@ -85,7 +85,7 @@ const STATES = [
     'auto_dt_open_pause'
 ]
 
-const COURSES: Record<number, string> = {
+export const COURSES: Record<number, string> = {
     0x01: 'Cotton',
     0x02: 'Cotton Eco',
     0x03: 'Easy Care',
@@ -100,7 +100,7 @@ const COURSES: Record<number, string> = {
     0x3A: 'AI Wash',
 }
 
-const SPIN_RPM: Record<number, number | undefined> = {
+export const SPIN_RPM: Record<number, number | undefined> = {
     0x00: 0,
     0x01: 0,
     0x02: 400,
@@ -113,7 +113,7 @@ const SPIN_RPM: Record<number, number | undefined> = {
     0x09: 1200,
 }
 
-const TEMPS: Record<number, string> = {
+export const TEMPS: Record<number, string> = {
     0x00: 'off',
     0x01: 'cold',
     0x02: '20',
@@ -121,6 +121,55 @@ const TEMPS: Record<number, string> = {
     0x04: '40',
     0x06: '60',
     0x07: '95',
+}
+
+export { ERRORS }
+
+export interface Parsed53 {
+    state: string
+    remaining_time: number
+    initial_time: number
+    course: string
+    error: string
+    spin: number | string
+    temperature: string
+    cycles: number
+    energy: number
+    door_lock: boolean    // true = locked (bit clear), preserves existing "inverted" semantics
+    remote_start: boolean
+    flags1_raw: number
+}
+
+export function parse53Byte(buf: Buffer): Parsed53 | null {
+    // Length discriminator via buf[3]=0x39 — strict to avoid shadowing 96-byte (buf[3]=0x60) etc.
+    if(buf.length < 53) return null
+    if(buf[0] !== 0x20 || buf[1] !== 0x0a || buf[3] !== 0x39) return null
+
+    const status = buf[15]
+    const tremain = buf[16] * 60 + buf[17]
+    const tinitial = buf[18] * 60 + buf[19]
+    const course = buf[20]
+    const error = buf[21]
+    const spin = buf[23]
+    const temp = buf[24]
+    const flags1_raw = buf[30]
+    const cycles = buf[36]
+    const energy = buf[44]
+
+    return {
+        state: STATES[status] ?? 'unknown_status',
+        remaining_time: tremain,
+        initial_time: tinitial,
+        course: COURSES[course] ?? `unknown_${course.toString(16)}`,
+        error: ERRORS[error] ?? 'unknown_error',
+        spin: SPIN_RPM[spin] ?? (spin === 0xFF ? 'max' : spin * 100),
+        temperature: TEMPS[temp] ?? `${temp * 10}`,
+        cycles,
+        energy,
+        door_lock: !(flags1_raw & 0x40),  // existing: bit CLEAR = locked
+        remote_start: (flags1_raw & 0x02) !== 0,
+        flags1_raw,
+    }
 }
 
 export default class Device extends AABBDevice {
@@ -230,31 +279,24 @@ export default class Device extends AABBDevice {
     }
 
     processAABB(buf: Buffer) {
-        if(buf[0] == 0x20 && buf[10] == 0xEC && buf.length >= 53) {
-            const status = buf[15]
-            const tremain = buf[16] * 60 + buf[17]
-            const tinitial = buf[18] * 60 + buf[19]
-            const course = buf[20]
-            const error = buf[21]
-            const spin = buf[23]
-            const temp = buf[24]
-            const flags1 = buf[30]
-            const cycles = buf[36]
-            const energy = buf[44]
+        const parsed53 = parse53Byte(buf)
+        if(parsed53) { this.publishParsed53(parsed53); return }
+        // Dispatcher extended in later tasks (65/96/134/138-byte parsers)
+    }
 
-            this.publishProperty('power', status > 0 ? 'ON' : 'OFF')
-            this.publishProperty('status', STATES[status] ?? 'unknown_status')
-            this.publishProperty('error', ERRORS[error] ?? 'unknown_error')
-            this.publishProperty('cycles', cycles)
-            this.publishProperty('remote_start', (flags1 & 2) ? 'ON': 'OFF')
-            this.publishProperty('door_lock', !(flags1 & 0x40) ? 'ON': 'OFF') // inverted logic, off=locked
-            this.publishProperty('remaining_time', tremain)
-            this.publishProperty('initial_time', tinitial)
-            this.publishProperty('course', COURSES[course] ?? `unknown_${course.toString(16)}`)
-            this.publishProperty('spin', SPIN_RPM[spin] ?? spin * 100)
-            this.publishProperty('temperature', TEMPS[temp] ?? `${temp * 10}`)
-            this.publishProperty('energy', energy)
-        }
+    private publishParsed53(p: Parsed53) {
+        this.publishProperty('power', p.state !== 'power_off' ? 'ON' : 'OFF')
+        this.publishProperty('status', p.state)
+        this.publishProperty('error', p.error)
+        this.publishProperty('cycles', p.cycles)
+        this.publishProperty('remote_start', p.remote_start ? 'ON' : 'OFF')
+        this.publishProperty('door_lock', p.door_lock ? 'ON' : 'OFF')  // preserves existing: ON=locked
+        this.publishProperty('remaining_time', p.remaining_time)
+        this.publishProperty('initial_time', p.initial_time)
+        this.publishProperty('course', p.course)
+        this.publishProperty('spin', p.spin)
+        this.publishProperty('temperature', p.temperature)
+        this.publishProperty('energy', p.energy)
     }
 
     setProperty(prop: string, mqttValue: string) {
