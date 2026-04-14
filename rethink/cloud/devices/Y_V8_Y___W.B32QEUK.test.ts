@@ -2,12 +2,15 @@ import { describe, it, expect } from 'vitest'
 import {
     parse53Byte, parse65Byte, parse96Byte, parse134Byte, parse138Byte,
     decodeFlagsByte1, decodeFlagsByte2, decodeAiddLed, CC_NAMES, CC_BY_NAME,
-    buildF025Set,
+    buildF025Set, buildF026Start,
 } from './Y_V8_Y___W.B32QEUK.js'
 import {
     CMD_F025_COLD_WASH,
     CMD_F025_MIXED_1200_20,
     CMD_F025_MIXED_CC_FF,
+    CMD_F026_MIXED_START,
+    CMD_F026_DUVET_START,
+    CMD_F026_AI_WASH_START,
 } from './Y_V8_Y___W.B32QEUK.fixtures.js'
 
 describe('parse53Byte', () => {
@@ -320,5 +323,38 @@ describe('buildF025Set', () => {
         expect(inner[13]).toBe(0x00)  // flags byte
         expect(inner[16]).toBe(0x00)  // cc byte
         expect(inner.length).toBe(20)
+    })
+})
+
+describe('buildF026Start', () => {
+    it('builds session Mixed 1200rpm 20C start', () => {
+        const inner = buildF026Start(CMD_F026_MIXED_START.params)
+        expect(inner.toString('hex')).toBe('f02607030902010000000000000300000000')
+    })
+
+    it('builds Duvet start (session offset)', () => {
+        const inner = buildF026Start(CMD_F026_DUVET_START.params)
+        expect(inner.toString('hex').toLowerCase()).toBe('f02605030701010000000000000300000000')
+    })
+
+    it('builds AI Wash start with spin=max', () => {
+        const inner = buildF026Start(CMD_F026_AI_WASH_START.params)
+        expect(inner.toString('hex').toLowerCase()).toBe('f0263a03ff04010000000000000300000000')
+    })
+
+    it('supports delay=4h at byte[9]', () => {
+        const inner = buildF026Start({
+            program_id: 0x05, spin: 0x07, temp: 0x02, rinse: 0x01, delay: 4
+        })
+        expect(inner.toString('hex').toLowerCase()).toBe('f02605030702010000040000000300000000')
+    })
+
+    it('defaults delay to 0 when omitted', () => {
+        const inner = buildF026Start({
+            program_id: 0x07, spin: 0x09, temp: 0x02, rinse: 0x01
+        })
+        expect(inner[9]).toBe(0)
+        expect(inner[13]).toBe(0x03)  // magic byte
+        expect(inner.length).toBe(18)
     })
 })

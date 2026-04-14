@@ -216,6 +216,30 @@ export function buildF025Set(p: F025Params): Buffer {
     return buf
 }
 
+export interface F026Params {
+    program_id: number
+    spin: number
+    temp: number
+    rinse: number
+    delay?: number  // hours, 0-19
+}
+
+export function buildF026Start(p: F026Params): Buffer {
+    // 18-byte inner payload, session-offset form:
+    // F0 26 <program> 03 <spin> <temp> <rinse> 00 00 <delay> 00 00 0x03 00 00 00 00
+    const buf = Buffer.alloc(18)
+    buf[0] = 0xF0
+    buf[1] = 0x26
+    buf[2] = p.program_id
+    buf[3] = 0x03
+    buf[4] = p.spin
+    buf[5] = p.temp
+    buf[6] = p.rinse
+    buf[9] = p.delay ?? 0
+    buf[13] = 0x03  // session-confirmed magic byte
+    return buf
+}
+
 export interface Parsed53 {
     state: string
     remaining_time: number
