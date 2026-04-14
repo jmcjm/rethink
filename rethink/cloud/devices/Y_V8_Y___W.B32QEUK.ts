@@ -240,6 +240,14 @@ export function buildF026Start(p: F026Params): Buffer {
     return buf
 }
 
+export function buildF02APowerToggle(): Buffer {
+    return Buffer.from([0xF0, 0x2A, 0x01, 0x00])
+}
+
+export function buildF024TurnOff(): Buffer {
+    return Buffer.from([0xF0, 0x24, 0x01, 0x01, 0x00])
+}
+
 export interface Parsed53 {
     state: string
     remaining_time: number

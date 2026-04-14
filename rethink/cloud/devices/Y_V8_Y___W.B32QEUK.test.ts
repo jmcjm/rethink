@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
     parse53Byte, parse65Byte, parse96Byte, parse134Byte, parse138Byte,
     decodeFlagsByte1, decodeFlagsByte2, decodeAiddLed, CC_NAMES, CC_BY_NAME,
-    buildF025Set, buildF026Start,
+    buildF025Set, buildF026Start, buildF02APowerToggle, buildF024TurnOff,
 } from './Y_V8_Y___W.B32QEUK.js'
 import {
     CMD_F025_COLD_WASH,
@@ -356,5 +356,17 @@ describe('buildF026Start', () => {
         expect(inner[9]).toBe(0)
         expect(inner[13]).toBe(0x03)  // magic byte
         expect(inner.length).toBe(18)
+    })
+})
+
+describe('buildF02APowerToggle', () => {
+    it('produces 4-byte inner F0 2A 01 00', () => {
+        expect(buildF02APowerToggle().toString('hex').toLowerCase()).toBe('f02a0100')
+    })
+})
+
+describe('buildF024TurnOff', () => {
+    it('produces 5-byte inner F0 24 01 01 00', () => {
+        expect(buildF024TurnOff().toString('hex').toLowerCase()).toBe('f024010100')
     })
 })
