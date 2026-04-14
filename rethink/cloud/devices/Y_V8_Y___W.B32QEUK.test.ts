@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { parse53Byte, parse65Byte, parse96Byte, parse134Byte, parse138Byte } from './Y_V8_Y___W.B32QEUK.js'
+import {
+    parse53Byte, parse65Byte, parse96Byte, parse134Byte, parse138Byte,
+    decodeFlagsByte1, decodeFlagsByte2, decodeAiddLed, CC_NAMES, CC_BY_NAME,
+} from './Y_V8_Y___W.B32QEUK.js'
 
 describe('parse53Byte', () => {
     it('parses a constructed INITIAL status packet', () => {
@@ -33,6 +36,10 @@ describe('parse53Byte', () => {
         expect(parsed!.cycles).toBe(6)
         expect(parsed!.energy).toBe(0)
         expect(parsed!.door_lock).toBe(true)
+        expect(parsed!.turbo_wash).toBe(false)
+        expect(parsed!.steam).toBe(false)
+        expect(parsed!.child_lock).toBe(false)
+        expect(parsed!.aidd_led).toBe(false)
     })
 
     it('returns null when discriminator byte[3] does not match 0x39', () => {
@@ -200,5 +207,86 @@ describe('parse138Byte', () => {
         buf[1] = 0x0a
         buf[3] = 0x86
         expect(parse138Byte(buf)).toBeNull()
+    })
+})
+
+describe('decodeFlagsByte1 (byte[29])', () => {
+    it('decodes turbo + ecoHybrid + steam', () => {
+        expect(decodeFlagsByte1(0x89)).toEqual({
+            turboWash: true,
+            creaseCare: false,
+            steamSoftener: false,
+            ecoHybrid: true,
+            medicRinse: false,
+            rinseSpin: false,
+            preWash: false,
+            steam: true,
+        })
+    })
+
+    it('zero byte = all false', () => {
+        const f = decodeFlagsByte1(0x00)
+        expect(Object.values(f).every(v => v === false)).toBe(true)
+    })
+})
+
+describe('decodeFlagsByte2 (byte[30])', () => {
+    it('decodes remoteStart + doorLock + childLock', () => {
+        expect(decodeFlagsByte2(0xC2)).toEqual({
+            initialBit: false,
+            remoteStart: true,
+            wrinkleCare: false,
+            doorLock: true,
+            childLock: true,
+        })
+    })
+})
+
+describe('decodeAiddLed (byte[31])', () => {
+    it('returns true when bit 0x01 set', () => {
+        expect(decodeAiddLed(0x01)).toBe(true)
+    })
+    it('returns false when bit 0x01 clear', () => {
+        expect(decodeAiddLed(0x00)).toBe(false)
+    })
+})
+
+describe('CC_NAMES', () => {
+    it('maps downloadable course CC hex to names', () => {
+        expect(CC_NAMES[0x4D]).toBe('Cold Wash')
+        expect(CC_NAMES[0x47]).toBe('Baby Care')
+        expect(CC_NAMES[0x84]).toBe('Silent Wash')
+        expect(CC_NAMES[0x49]).toBe('Small Load')
+        expect(CC_NAMES[0x36]).toBe('Swimming Wear')
+        expect(CC_NAMES[0x48]).toBe('Hygiene')
+    })
+
+    it('CC_BY_NAME reverses CC_NAMES', () => {
+        expect(CC_BY_NAME['Cold Wash']).toBe(0x4D)
+        expect(CC_BY_NAME['Hygiene']).toBe(0x48)
+    })
+})
+
+// Updated parse53Byte test — now that offsets are corrected, flags fields must be present
+describe('parse53Byte with flag decoders', () => {
+    it('extracts turbo/steam/door_lock/child_lock from correct offsets', () => {
+        const buf = Buffer.alloc(53)
+        buf[0] = 0x20; buf[1] = 0x0a; buf[3] = 0x39
+        buf[15] = 0x01
+        buf[20] = 0x07
+        buf[23] = 0x09
+        buf[24] = 0x02
+        buf[29] = 0x81  // turbo + steam
+        buf[30] = 0x80  // childLock; doorLock bit CLEAR => locked=true
+        buf[31] = 0x01  // AIDD led
+
+        const parsed = parse53Byte(buf)
+        expect(parsed).not.toBeNull()
+        expect(parsed!.turbo_wash).toBe(true)
+        expect(parsed!.steam).toBe(true)
+        expect(parsed!.crease_care).toBe(false)
+        expect(parsed!.child_lock).toBe(true)
+        expect(parsed!.door_lock).toBe(true)  // bit CLEAR = locked
+        expect(parsed!.aidd_led).toBe(true)
     })
 })

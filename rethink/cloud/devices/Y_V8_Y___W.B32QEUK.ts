@@ -125,6 +125,70 @@ export const TEMPS: Record<number, string> = {
 
 export { ERRORS }
 
+// Flag byte decoders per wiki Appliance:Y_V8_Y___W.B32QEUK.md ascii-art layout.
+// byte[29]: turboWash/creaseCare/steamSoftener/ecoHybrid/medicRinse/rinseSpin/preWash/steam
+// byte[30]: initialBit/remoteStart/wrinkleCare/doorLock/childLock
+// byte[31]: AIDD LED (bit 0x01)
+
+export interface FlagsByte1 {
+    turboWash: boolean
+    creaseCare: boolean
+    steamSoftener: boolean
+    ecoHybrid: boolean
+    medicRinse: boolean
+    rinseSpin: boolean
+    preWash: boolean
+    steam: boolean
+}
+
+export function decodeFlagsByte1(b: number): FlagsByte1 {
+    return {
+        turboWash: (b & 0x01) !== 0,
+        creaseCare: (b & 0x02) !== 0,
+        steamSoftener: (b & 0x04) !== 0,
+        ecoHybrid: (b & 0x08) !== 0,
+        medicRinse: (b & 0x10) !== 0,
+        rinseSpin: (b & 0x20) !== 0,
+        preWash: (b & 0x40) !== 0,
+        steam: (b & 0x80) !== 0,
+    }
+}
+
+export interface FlagsByte2 {
+    initialBit: boolean
+    remoteStart: boolean
+    wrinkleCare: boolean
+    doorLock: boolean  // raw bit — SET = unlocked (inverted per HA lock device_class)
+    childLock: boolean
+}
+
+export function decodeFlagsByte2(b: number): FlagsByte2 {
+    return {
+        initialBit: (b & 0x01) !== 0,
+        remoteStart: (b & 0x02) !== 0,
+        wrinkleCare: (b & 0x20) !== 0,
+        doorLock: (b & 0x40) !== 0,
+        childLock: (b & 0x80) !== 0,
+    }
+}
+
+export function decodeAiddLed(b: number): boolean {
+    return (b & 0x01) !== 0
+}
+
+export const CC_NAMES: Record<number, string> = {
+    0x47: 'Baby Care',
+    0x4D: 'Cold Wash',
+    0x84: 'Silent Wash',
+    0x49: 'Small Load',
+    0x36: 'Swimming Wear',
+    0x48: 'Hygiene',
+}
+
+export const CC_BY_NAME: Record<string, number> = Object.fromEntries(
+    Object.entries(CC_NAMES).map(([hex, name]) => [name, Number(hex)])
+)
+
 export interface Parsed53 {
     state: string
     remaining_time: number
@@ -135,9 +199,22 @@ export interface Parsed53 {
     temperature: string
     cycles: number
     energy: number
-    door_lock: boolean    // true = locked (bit clear), preserves existing "inverted" semantics
+    door_lock: boolean
     remote_start: boolean
-    flags1_raw: number
+    child_lock: boolean
+    wrinkle_care: boolean
+    turbo_wash: boolean
+    crease_care: boolean
+    steam_softener: boolean
+    eco_hybrid: boolean
+    medic_rinse: boolean
+    rinse_spin: boolean
+    pre_wash: boolean
+    steam: boolean
+    aidd_led: boolean
+    flags1_raw: number  // byte[29]
+    flags2_raw: number  // byte[30]
+    flags3_raw: number  // byte[31]
 }
 
 export function parse53Byte(buf: Buffer): Parsed53 | null {
@@ -152,9 +229,15 @@ export function parse53Byte(buf: Buffer): Parsed53 | null {
     const error = buf[21]
     const spin = buf[23]
     const temp = buf[24]
-    const flags1_raw = buf[30]
     const cycles = buf[36]
     const energy = buf[44]
+
+    const flags1_raw = buf[29]
+    const flags2_raw = buf[30]
+    const flags3_raw = buf[31]
+    const f1 = decodeFlagsByte1(flags1_raw)
+    const f2 = decodeFlagsByte2(flags2_raw)
+    const aidd_led = decodeAiddLed(flags3_raw)
 
     return {
         state: STATES[status] ?? 'unknown_status',
@@ -166,9 +249,22 @@ export function parse53Byte(buf: Buffer): Parsed53 | null {
         temperature: TEMPS[temp] ?? `${temp * 10}`,
         cycles,
         energy,
-        door_lock: !(flags1_raw & 0x40),  // existing: bit CLEAR = locked
-        remote_start: (flags1_raw & 0x02) !== 0,
+        door_lock: !f2.doorLock,  // inverted: bit CLEAR = locked = ON in HA
+        remote_start: f2.remoteStart,
+        child_lock: f2.childLock,
+        wrinkle_care: f2.wrinkleCare,
+        turbo_wash: f1.turboWash,
+        crease_care: f1.creaseCare,
+        steam_softener: f1.steamSoftener,
+        eco_hybrid: f1.ecoHybrid,
+        medic_rinse: f1.medicRinse,
+        rinse_spin: f1.rinseSpin,
+        pre_wash: f1.preWash,
+        steam: f1.steam,
+        aidd_led,
         flags1_raw,
+        flags2_raw,
+        flags3_raw,
     }
 }
 
@@ -418,7 +514,18 @@ export default class Device extends AABBDevice {
         this.publishProperty('error', p.error)
         this.publishProperty('cycles', p.cycles)
         this.publishProperty('remote_start', p.remote_start ? 'ON' : 'OFF')
-        this.publishProperty('door_lock', p.door_lock ? 'ON' : 'OFF')  // preserves existing: ON=locked
+        this.publishProperty('door_lock', p.door_lock ? 'ON' : 'OFF')  // ON=locked preserved
+        this.publishProperty('child_lock', p.child_lock ? 'ON' : 'OFF')
+        this.publishProperty('wrinkle_care', p.wrinkle_care ? 'ON' : 'OFF')
+        this.publishProperty('turbo_wash', p.turbo_wash ? 'ON' : 'OFF')
+        this.publishProperty('crease_care', p.crease_care ? 'ON' : 'OFF')
+        this.publishProperty('steam_softener', p.steam_softener ? 'ON' : 'OFF')
+        this.publishProperty('eco_hybrid', p.eco_hybrid ? 'ON' : 'OFF')
+        this.publishProperty('medic_rinse', p.medic_rinse ? 'ON' : 'OFF')
+        this.publishProperty('rinse_spin', p.rinse_spin ? 'ON' : 'OFF')
+        this.publishProperty('pre_wash', p.pre_wash ? 'ON' : 'OFF')
+        this.publishProperty('steam', p.steam ? 'ON' : 'OFF')
+        this.publishProperty('aidd_led', p.aidd_led ? 'ON' : 'OFF')
         this.publishProperty('remaining_time', p.remaining_time)
         this.publishProperty('initial_time', p.initial_time)
         this.publishProperty('course', p.course)
