@@ -189,6 +189,33 @@ export const CC_BY_NAME: Record<string, number> = Object.fromEntries(
     Object.entries(CC_NAMES).map(([hex, name]) => [name, Number(hex)])
 )
 
+export interface F025Params {
+    program_id: number
+    spin: number
+    temp: number
+    rinse: number
+    flags_byte?: number
+    cc?: number
+}
+
+export function buildF025Set(p: F025Params): Buffer {
+    // 20-byte inner payload per wiki layout:
+    // F0 25 03 15 <program> 03 <spin> <temp> <rinse> 00 00 00 00 <flags> 00 00 <cc> 00 00 00
+    const buf = Buffer.alloc(20)
+    buf[0] = 0xF0
+    buf[1] = 0x25
+    buf[2] = 0x03
+    buf[3] = 0x15
+    buf[4] = p.program_id
+    buf[5] = 0x03
+    buf[6] = p.spin
+    buf[7] = p.temp
+    buf[8] = p.rinse
+    buf[13] = p.flags_byte ?? 0
+    buf[16] = p.cc ?? 0
+    return buf
+}
+
 export interface Parsed53 {
     state: string
     remaining_time: number

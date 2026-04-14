@@ -2,7 +2,13 @@ import { describe, it, expect } from 'vitest'
 import {
     parse53Byte, parse65Byte, parse96Byte, parse134Byte, parse138Byte,
     decodeFlagsByte1, decodeFlagsByte2, decodeAiddLed, CC_NAMES, CC_BY_NAME,
+    buildF025Set,
 } from './Y_V8_Y___W.B32QEUK.js'
+import {
+    CMD_F025_COLD_WASH,
+    CMD_F025_MIXED_1200_20,
+    CMD_F025_MIXED_CC_FF,
+} from './Y_V8_Y___W.B32QEUK.fixtures.js'
 
 describe('parse53Byte', () => {
     it('parses a constructed INITIAL status packet', () => {
@@ -288,5 +294,31 @@ describe('parse53Byte with flag decoders', () => {
         expect(parsed!.child_lock).toBe(true)
         expect(parsed!.door_lock).toBe(true)  // bit CLEAR = locked
         expect(parsed!.aidd_led).toBe(true)
+    })
+})
+
+describe('buildF025Set', () => {
+    it('builds Cold Wash packet matching confirmed hex', () => {
+        const inner = buildF025Set(CMD_F025_COLD_WASH.params)
+        expect(inner.toString('hex')).toBe('f02503150103070101000000000000004d000000')
+    })
+
+    it('builds Mixed 1200rpm 20C (no CC)', () => {
+        const inner = buildF025Set(CMD_F025_MIXED_1200_20.params)
+        expect(inner.toString('hex')).toBe('f025031507030902010000000000000000000000')
+    })
+
+    it('builds Mixed with CC=FF', () => {
+        const inner = buildF025Set(CMD_F025_MIXED_CC_FF.params)
+        expect(inner.toString('hex')).toBe('f0250315070309020100000000000000ff000000')
+    })
+
+    it('defaults flags_byte and cc to 0 when omitted', () => {
+        const inner = buildF025Set({
+            program_id: 0x07, spin: 0x09, temp: 0x02, rinse: 0x01
+        })
+        expect(inner[13]).toBe(0x00)  // flags byte
+        expect(inner[16]).toBe(0x00)  // cc byte
+        expect(inner.length).toBe(20)
     })
 })
