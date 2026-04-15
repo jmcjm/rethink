@@ -88,26 +88,27 @@ export const STATES = [
 export // Course ID → display name. EU-model Y_V8_Y___W.B32QEUK dial mapping
 // verified 2026-04-15 by rotating the physical dial through every labelled position
 // while capturing internal MQTT (see Appliance:Y_V8_Y___W.B32QEUK.md in wiki for details).
+// Note: dial slots Delikatne and Ręczny/Wełna share 0x20 — distinguished by inner[62]
+// in status packet (Delikatne=0x07, Ręczny/Wełna=0x05). Cannot be reproduced by F025.
 // IDs marked (wiki) are from upstream wiki and not verified on this model.
 const COURSES: Record<number, string> = {
     0x01: 'Cotton',              // verified (dial: Bawełna)
     0x02: 'Synthetics',          // verified (dial: Syntetyczne)
     0x04: 'Eco 40-60',           // verified (dial: Eco 40-60)
+    0x05: 'Drum Clean',          // verified (dial: Czyszczenie bębna)
     0x07: 'Mixed',               // verified (dial: Mieszane)
-    0x20: 'Delicates',           // verified (dial: Delikatne)
-    0x2D: 'Hygiene',             // verified (dial: Antyalergiczny, auto-steam)
+    0x08: 'Speed 14',            // verified (dial: Szybki 14)
+    0x0C: 'Bedding',             // verified (dial: Pościel, also base for Small Load/Single Garment CC)
+    0x1B: 'Sportswear',          // verified (dial: Odzież sportowa, also base for Swimming Wear CC)
+    0x20: 'Delicates',           // verified (dial: Delikatne; Ręczny/Wełna also uses 0x20 with different inner[62])
+    0x2D: 'Hygiene',             // verified (dial: Antyalergiczny, auto-steam, also base for Hygiene CC)
     0x31: 'TurboWash 39',        // verified (dial: TurboWash 39, auto-turbo)
     0x3A: 'AI Wash',             // verified (dial: AI wash, auto-AIDD LED)
     // Wiki-only (not verified on this unit):
     0x03: 'Easy Care',           // wiki
-    0x05: 'Duvet',               // wiki
     0x06: 'Wool',                // wiki
-    0x08: 'Speed 14',            // wiki
     0x09: 'Rinse+Spin',          // wiki
     0x0A: 'Spin Only',           // wiki
-    0x0B: 'Drum Clean',          // wiki
-    0x0C: 'Small Load',          // wiki (downloadable base)
-    0x1B: 'Swimming Wear',       // wiki (downloadable base)
 }
 
 export const SPIN_RPM: Record<number, number | undefined> = {
