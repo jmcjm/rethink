@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import DUT from '@/cloud/devices/RH90V9_WW'
+import DUT, { buildF025SetCourse, DOWNLOADABLE_COURSES } from '@/cloud/devices/RH90V9_WW'
 import type { Metadata } from '@/cloud/thinq'
 import { MockHAConnection, MockThinq2Device, buf, hex } from '@/tests/helpers/mocks'
 
@@ -147,6 +147,58 @@ describe(MODEL_ID, () => {
         thinq.resetRecorder()
         dev.setProperty('power_off', '')
         assert.equal(hex(thinq.outbox[0]), WRITE_POWER_OFF)
+    })
+
+    test('staging a downloadable course reproduces the app-captured F025 packets', () => {
+        // Raw packets the ThinQ app sent, verbatim from
+        // captures_sessions/dryer_capture_2026-04-19_economic-dry_2h30m.log
+        const expected: Record<string, string> = {
+            'Economic Dry': 'AA1DF025031500019600000000000000197000000003000000000042BB',
+            'Baby Care': 'AA1DF0250315000382000000000000000265000000000000000000B5BB',
+            Deodoration: 'AA1DF025031500032700000000000000016B000000000000000000DFBB',
+            'Full Size Load': 'AA1DF02503150003A00000000000000019740000000400000000007DBB',
+        }
+        for (const [name, packet] of Object.entries(expected)) {
+            const { thinq, dev } = makeDevice()
+            thinq.resetRecorder()
+            dev.setProperty('stage_course', name)
+            assert.equal(thinq.outbox.length, 1, `${name} sends one packet`)
+            assert.equal(hex(thinq.outbox[0]), packet, name)
+        }
+    })
+
+    test('staging echoes the selection and rejects unknown courses', () => {
+        const { ha, thinq, dev } = makeDevice()
+        thinq.resetRecorder()
+        dev.setProperty('stage_course', 'Economic Dry')
+        assert.equal(ha.devices[DEVICE_ID].properties.stage_course, 'Economic Dry')
+
+        thinq.resetRecorder()
+        dev.setProperty('stage_course', 'Nonexistent Course')
+        assert.equal(thinq.outbox.length, 0)
+    })
+
+    test('builder output matches the course table', () => {
+        const b = buildF025SetCourse(DOWNLOADABLE_COURSES['Deodoration'])
+        assert.equal(b.length, 25)
+        assert.equal(b[5], 0x03) // dryLevel
+        assert.equal(b[6], 39) // duration
+        assert.equal(b[14], 0x01) // base
+        assert.equal(b[15], 0x6b) // cc
+        assert.equal(b[19], 0x00) // dryness
+    })
+
+    test('raw_send forwards a packet with a valid checksum only', () => {
+        const { thinq, dev } = makeDevice()
+        thinq.resetRecorder()
+        dev.setProperty('raw_send', WRITE_POWER_OFF)
+        assert.equal(thinq.outbox.length, 1)
+        assert.equal(hex(thinq.outbox[0]), WRITE_POWER_OFF)
+
+        thinq.resetRecorder()
+        dev.setProperty('raw_send', 'AA09F026010100FFBB') // wrong checksum
+        dev.setProperty('raw_send', 'F026010100') // no AA..BB envelope
+        assert.equal(thinq.outbox.length, 0)
     })
 
     test('HA write to unknown property emits no packet', () => {

@@ -57,6 +57,41 @@ export const CC_NAMES: Record<number, string> = {
     0x74: 'Full Size Load',
 }
 
+export interface F025Params {
+    dryLevel: number // 0x01=energy save, 0x03=time save
+    duration: number // minutes, matches the TD the dryer reports at cycle start
+    base: number // base program id (see COURSES)
+    cc: number // custom-course id (see CC_NAMES)
+    dryness: number // 0x00=sensor/fixed, 0x01=iron, 0x03=cupboard, 0x04=extra
+}
+
+// F025 "stage a downloadable course", 25-byte inner payload:
+// F0 25 03 15 00 [dryLevel] [duration] 00*7 [base] [cc] 00*3 [dryness] 00*5
+// The dryer accepts this layout without resetting (unlike washer-style payloads).
+// There is no known remote-start opcode — the user starts the staged course from
+// the physical panel. Parameter sets below are byte-for-byte from live app captures.
+export function buildF025SetCourse(p: F025Params): Buffer {
+    const buf = Buffer.alloc(25)
+    buf[0] = 0xf0
+    buf[1] = 0x25
+    buf[2] = 0x03
+    buf[3] = 0x15
+    buf[5] = p.dryLevel
+    buf[6] = p.duration
+    buf[14] = p.base
+    buf[15] = p.cc
+    buf[19] = p.dryness
+    return buf
+}
+
+// The four downloadable courses captured from the ThinQ app (2026-04-19 session).
+export const DOWNLOADABLE_COURSES: Record<string, F025Params> = {
+    'Economic Dry': { dryLevel: 0x01, duration: 150, base: 0x19, cc: 0x70, dryness: 0x03 },
+    'Baby Care': { dryLevel: 0x03, duration: 130, base: 0x02, cc: 0x65, dryness: 0x00 },
+    Deodoration: { dryLevel: 0x03, duration: 39, base: 0x01, cc: 0x6b, dryness: 0x00 },
+    'Full Size Load': { dryLevel: 0x03, duration: 160, base: 0x19, cc: 0x74, dryness: 0x04 },
+}
+
 export default class Device extends AABBDevice {
     constructor(HA: Connection, thinq: Thinq2Device, meta: Metadata) {
         super(HA, thinq)
@@ -175,6 +210,23 @@ export default class Device extends AABBDevice {
                         icon: 'mdi:download-circle-outline',
                         entity_category: 'diagnostic',
                     },
+                    stage_course: {
+                        platform: 'select',
+                        unique_id: '$deviceid-stage_course',
+                        state_topic: '$this/stage_course',
+                        command_topic: '$this/stage_course/set',
+                        name: 'Stage course',
+                        icon: 'mdi:download-circle-outline',
+                        options: Object.keys(DOWNLOADABLE_COURSES),
+                    },
+                    raw_send: {
+                        platform: 'text',
+                        unique_id: '$deviceid-raw_send',
+                        command_topic: '$this/raw_send/set',
+                        name: 'Raw hex send',
+                        icon: 'mdi:console',
+                        pattern: '^[0-9a-fA-F]{8,400}$',
+                    },
                 },
             }),
         )
@@ -245,6 +297,31 @@ export default class Device extends AABBDevice {
     setProperty(prop: string, mqttValue: string) {
         // F026 with any payload powers the dryer off. It does NOT start a cycle (unlike the
         // washer opcode space) — no start command is known for this dryer.
-        if (prop === 'power_off') this.send(Buffer.from('F026010100', 'hex'))
+        if (prop === 'power_off') {
+            this.send(Buffer.from('F026010100', 'hex'))
+            return
+        }
+
+        // Stage one of the known downloadable courses; the cycle is then started from
+        // the physical panel.
+        if (prop === 'stage_course') {
+            const params = DOWNLOADABLE_COURSES[mqttValue]
+            if (!params) return
+            this.send(buildF025SetCourse(params))
+            this.HA.publishProperty(this.id, prop, mqttValue)
+            return
+        }
+
+        if (prop === 'raw_send') {
+            const hexStr = mqttValue.replace(/\s+/g, '')
+            if (!/^[0-9a-fA-F]{8,}$/.test(hexStr) || hexStr.length % 2 !== 0) return
+            const packet = Buffer.from(hexStr, 'hex')
+            if (packet[0] !== 0xaa || packet[packet.length - 1] !== 0xbb) return
+            let sum = 0
+            for (let i = 0; i < packet.length - 2; i++) sum += packet[i]
+            if (((sum & 0xff) ^ 0x55) !== packet[packet.length - 2]) return
+            this.thinq.send_packet(packet)
+            return
+        }
     }
 }
