@@ -126,6 +126,18 @@ describe(MODEL_ID, () => {
         assert.equal(props.energy, 642)
     })
 
+    test('a zero temperature reading is not published as -17.8 °C', () => {
+        const { ha, thinq } = makeDevice()
+        thinq.emit('data', SAMPLE_SENSOR_LATER)
+        assert.equal(ha.devices[DEVICE_ID].properties.temperature, 52.8)
+
+        // Outside a cycle the dryer emits 303E bursts with a zero temperature field;
+        // the last real reading must survive instead of being overwritten.
+        thinq.emit('data', buf('AA0B303E0000000001A5BB'))
+        assert.equal(ha.devices[DEVICE_ID].properties.temperature, 52.8)
+        assert.equal(ha.devices[DEVICE_ID].properties.energy, 0)
+    })
+
     test('cycle markers (3072) are ignored', () => {
         const { ha, thinq } = makeDevice()
         thinq.emit('data', SAMPLE_IDLE)

@@ -354,8 +354,11 @@ export default class Device extends AABBDevice {
         // 303E sensor burst (~10 identical packets every 15 min while drying):
         // 303E 00 [tempF] [energy_hi energy_lo] [reading#]
         if (buf.length === 7 && buf[0] == 0x30 && buf[1] == 0x3e) {
-            const tempC = Math.round((((buf[3] - 32) * 5) / 9) * 10) / 10
-            this.publishProperty('temperature', tempC)
+            // A zero temperature is the "no reading" sentinel the dryer emits outside a
+            // cycle — converting it would publish a bogus -17.8 °C.
+            if (buf[3] !== 0) {
+                this.publishProperty('temperature', Math.round((((buf[3] - 32) * 5) / 9) * 10) / 10)
+            }
             this.publishProperty('energy', (buf[4] << 8) | buf[5])
             return
         }
