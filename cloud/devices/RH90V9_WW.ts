@@ -83,12 +83,15 @@ export function buildF025SetCourse(p: F025Params): Buffer {
     return buf
 }
 
-// The four downloadable courses captured from the ThinQ app (2026-04-19 session).
+// Downloadable courses captured from the ThinQ app (2026-04-19 and 2026-07-27 sessions).
+// The appliance only accepts course definitions it already holds, so this list can only
+// grow by capturing another app download — the fields are not freely composable.
 export const DOWNLOADABLE_COURSES: Record<string, F025Params> = {
     'Economic Dry': { dryLevel: 0x01, duration: 150, base: 0x19, cc: 0x70, dryness: 0x03 },
     'Baby Care': { dryLevel: 0x03, duration: 130, base: 0x02, cc: 0x65, dryness: 0x00 },
     Deodoration: { dryLevel: 0x03, duration: 39, base: 0x01, cc: 0x6b, dryness: 0x00 },
     'Full Size Load': { dryLevel: 0x03, duration: 160, base: 0x19, cc: 0x74, dryness: 0x04 },
+    'Small Load': { dryLevel: 0x03, duration: 50, base: 0x0e, cc: 0x6c, dryness: 0x00 },
 }
 
 export const START_MODE = 0x03 // start a cycle from scratch

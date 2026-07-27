@@ -169,6 +169,9 @@ describe(MODEL_ID, () => {
             'Baby Care': 'AA1DF0250315000382000000000000000265000000000000000000B5BB',
             Deodoration: 'AA1DF025031500032700000000000000016B000000000000000000DFBB',
             'Full Size Load': 'AA1DF02503150003A00000000000000019740000000400000000007DBB',
+            // captured 2026-07-27; the app set inner[12] to 0x01 in this one, which the
+            // appliance does not validate — replaying it with 0x00 stages the course too
+            'Small Load': 'AA1DF0250315000332000000000000000E6C000000000000000000F6BB',
         }
         for (const [name, packet] of Object.entries(expected)) {
             const { thinq, dev } = makeDevice()
