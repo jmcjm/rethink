@@ -68,8 +68,7 @@ export interface F025Params {
 // F025 "stage a downloadable course", 25-byte inner payload:
 // F0 25 03 15 00 [dryLevel] [duration] 00*7 [base] [cc] 00*3 [dryness] 00*5
 // The dryer accepts this layout without resetting (unlike washer-style payloads).
-// There is no known remote-start opcode — the user starts the staged course from
-// the physical panel. Parameter sets below are byte-for-byte from live app captures.
+// Parameter sets below are byte-for-byte from live app captures.
 export function buildF025SetCourse(p: F025Params): Buffer {
     const buf = Buffer.alloc(25)
     buf[0] = 0xf0
@@ -90,6 +89,46 @@ export const DOWNLOADABLE_COURSES: Record<string, F025Params> = {
     'Baby Care': { dryLevel: 0x03, duration: 130, base: 0x02, cc: 0x65, dryness: 0x00 },
     Deodoration: { dryLevel: 0x03, duration: 39, base: 0x01, cc: 0x6b, dryness: 0x00 },
     'Full Size Load': { dryLevel: 0x03, duration: 160, base: 0x19, cc: 0x74, dryness: 0x04 },
+}
+
+export const START_MODE = 0x03 // start a cycle from scratch
+export const RESUME_MODE = 0x01 // resume after a pause
+export const DELAY_UNCHANGED = 0xff // leave the delay timer as it is
+
+export interface F026Params {
+    course: number
+    dryLevel: number
+    duration?: number // minutes; 0 lets the dryer pick the course default
+    delay?: number // hours until the cycle ends; DELAY_UNCHANGED keeps the current setting
+    options?: number // bitfield, 0x02 = anti-crease
+    mode?: number // START_MODE / RESUME_MODE
+}
+
+// F026 starts a cycle, with the full configuration in the payload — the same shape the
+// washer uses, contrary to older documentation claiming F026 only powers the dryer off.
+// (That behaviour comes from sending a malformed payload, which is what `power_off` below
+// still does deliberately.) 16-byte inner payload:
+// F0 26 [course] 03 [dryLevel] [duration] 00 00 [delay] 00 00 [options] [mode] 00 00 00
+// Field mapping verified 2026-07-27 against live ThinQ app captures of a start, a start
+// with a 3 h delayed end plus anti-crease, and a resume after pause.
+export function buildF026Start(p: F026Params): Buffer {
+    const buf = Buffer.alloc(16)
+    buf[0] = 0xf0
+    buf[1] = 0x26
+    buf[2] = p.course
+    buf[3] = 0x03
+    buf[4] = p.dryLevel
+    buf[5] = p.duration ?? 0
+    buf[8] = p.delay ?? 0
+    buf[11] = p.options ?? 0
+    buf[12] = p.mode ?? START_MODE
+    return buf
+}
+
+// Pause, shared with the washer opcode space (older documentation claims the dryer
+// ignores F024 — the ThinQ app itself uses this exact packet).
+export function buildF024Pause(): Buffer {
+    return Buffer.from([0xf0, 0x24, 0x04, 0x01, 0x00])
 }
 
 export default class Device extends AABBDevice {
@@ -215,9 +254,71 @@ export default class Device extends AABBDevice {
                         unique_id: '$deviceid-stage_course',
                         state_topic: '$this/stage_course',
                         command_topic: '$this/stage_course/set',
-                        name: 'Stage course',
+                        name: 'Stage downloadable course',
                         icon: 'mdi:download-circle-outline',
                         options: Object.keys(DOWNLOADABLE_COURSES),
+                    },
+                    // remote cycle configuration: pick the values, then press start
+                    stage_program: {
+                        platform: 'select',
+                        unique_id: '$deviceid-stage_program',
+                        state_topic: '$this/stage_program',
+                        command_topic: '$this/stage_program/set',
+                        name: 'Staged: Course',
+                        icon: 'mdi:format-list-bulleted',
+                        options: Object.values(COURSES),
+                    },
+                    stage_dry_level: {
+                        platform: 'select',
+                        unique_id: '$deviceid-stage_dry_level',
+                        state_topic: '$this/stage_dry_level',
+                        command_topic: '$this/stage_dry_level/set',
+                        name: 'Staged: Dry level',
+                        icon: 'mdi:speedometer',
+                        options: Object.values(DRY_LEVELS),
+                    },
+                    stage_delay: {
+                        platform: 'number',
+                        unique_id: '$deviceid-stage_delay',
+                        state_topic: '$this/stage_delay',
+                        command_topic: '$this/stage_delay/set',
+                        name: 'Staged: Delayed end (h)',
+                        icon: 'mdi:timer-outline',
+                        min: 0,
+                        max: 19,
+                        step: 1,
+                    },
+                    stage_anti_crease: {
+                        platform: 'switch',
+                        unique_id: '$deviceid-stage_anti_crease',
+                        state_topic: '$this/stage_anti_crease',
+                        command_topic: '$this/stage_anti_crease/set',
+                        name: 'Staged: Anti-crease',
+                        icon: 'mdi:iron-outline',
+                    },
+                    start: {
+                        platform: 'button',
+                        unique_id: '$deviceid-start',
+                        command_topic: '$this/start/set',
+                        payload_press: '',
+                        name: 'Start staged cycle',
+                        icon: 'mdi:play-circle-outline',
+                    },
+                    pause: {
+                        platform: 'button',
+                        unique_id: '$deviceid-pause',
+                        command_topic: '$this/pause/set',
+                        payload_press: '',
+                        name: 'Pause',
+                        icon: 'mdi:pause-circle-outline',
+                    },
+                    resume: {
+                        platform: 'button',
+                        unique_id: '$deviceid-resume',
+                        command_topic: '$this/resume/set',
+                        payload_press: '',
+                        name: 'Resume',
+                        icon: 'mdi:play-pause',
                     },
                     raw_send: {
                         platform: 'text',
@@ -278,6 +379,8 @@ export default class Device extends AABBDevice {
         const options = b[14]
         const cc = b[23]
 
+        this.lastStatus = { course, dryLevel, options }
+
         this.publishProperty('power', state > 0 ? 'ON' : 'OFF')
         this.publishProperty('status', STATES[state] ?? 'unknown')
         this.publishProperty('remaining_time', remaining)
@@ -294,11 +397,62 @@ export default class Device extends AABBDevice {
         this.publishProperty('staged_cc', cc ? (CC_NAMES[cc] ?? `unknown (0x${cc.toString(16)})`) : 'None')
     }
 
+    // last known live configuration, used as the fallback when resuming a cycle that was
+    // configured on the appliance itself rather than from HA
+    private lastStatus = { course: 0, dryLevel: 0x01, options: 0 }
+
+    private staged: { course?: string; dryLevel?: string; delay?: number; antiCrease?: boolean } = {}
+
+    private stagedF026(mode: number): Buffer | undefined {
+        const courseName = this.staged.course
+        const course = courseName
+            ? Number(Object.entries(COURSES).find(([, n]) => n === courseName)?.[0])
+            : this.lastStatus.course
+        if (!course) return undefined
+
+        const levelName = this.staged.dryLevel
+        const dryLevel = levelName
+            ? Number(Object.entries(DRY_LEVELS).find(([, n]) => n === levelName)?.[0])
+            : this.lastStatus.dryLevel
+
+        const antiCrease = this.staged.antiCrease ?? !!(this.lastStatus.options & 0x02)
+
+        return buildF026Start({
+            course,
+            dryLevel,
+            delay: mode === RESUME_MODE ? DELAY_UNCHANGED : (this.staged.delay ?? 0),
+            options: antiCrease ? 0x02 : 0x00,
+            mode,
+        })
+    }
+
     setProperty(prop: string, mqttValue: string) {
-        // F026 with any payload powers the dryer off. It does NOT start a cycle (unlike the
-        // washer opcode space) — no start command is known for this dryer.
+        // A malformed F026 payload powers the dryer off — a quirk of the start opcode
+        // rejecting garbage, not a dedicated power command.
         if (prop === 'power_off') {
             this.send(Buffer.from('F026010100', 'hex'))
+            return
+        }
+
+        if (prop === 'pause') {
+            this.send(buildF024Pause())
+            return
+        }
+
+        if (prop === 'start' || prop === 'resume') {
+            const packet = this.stagedF026(prop === 'resume' ? RESUME_MODE : START_MODE)
+            if (packet) this.send(packet)
+            return
+        }
+
+        if (prop.startsWith('stage_') && prop !== 'stage_course') {
+            const key = prop.slice('stage_'.length)
+            if (key === 'program') this.staged.course = mqttValue
+            else if (key === 'dry_level') this.staged.dryLevel = mqttValue
+            else if (key === 'delay') this.staged.delay = Number(mqttValue)
+            else if (key === 'anti_crease') this.staged.antiCrease = mqttValue === 'ON'
+            else return
+            this.HA.publishProperty(this.id, prop, mqttValue)
             return
         }
 

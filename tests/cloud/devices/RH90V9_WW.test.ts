@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import DUT, { buildF025SetCourse, DOWNLOADABLE_COURSES } from '@/cloud/devices/RH90V9_WW'
+import DUT, { buildF025SetCourse, buildF026Start, DOWNLOADABLE_COURSES } from '@/cloud/devices/RH90V9_WW'
 import type { Metadata } from '@/cloud/thinq'
 import { MockHAConnection, MockThinq2Device, buf, hex } from '@/tests/helpers/mocks'
 
@@ -198,6 +198,71 @@ describe(MODEL_ID, () => {
         thinq.resetRecorder()
         dev.setProperty('raw_send', 'AA09F026010100FFBB') // wrong checksum
         dev.setProperty('raw_send', 'F026010100') // no AA..BB envelope
+        assert.equal(thinq.outbox.length, 0)
+    })
+
+    // Cycle control packets captured live from the ThinQ app on 2026-07-27.
+    const APP_START_MIXED = 'AA14F0260603011E00000000000003000000AABB'
+    const APP_START_ECO_DELAYED = 'AA14F0261903010000000300000203000000ACBB'
+    const APP_RESUME_ECO = 'AA14F026190301000000FF00000201000000A6BB'
+    const APP_PAUSE = 'AA09F02404010099BB'
+
+    test('F026 builder reproduces the app-captured cycle commands', () => {
+        // start Mixed, energy save, 30 min, no delay, no anti-crease
+        assert.equal(hex(buildF026Start({ course: 0x06, dryLevel: 0x01, duration: 30 })), APP_START_MIXED.slice(4, -4))
+        // start Eco, energy save, course default duration, 3 h delayed end, anti-crease on
+        assert.equal(
+            hex(buildF026Start({ course: 0x19, dryLevel: 0x01, delay: 3, options: 0x02 })),
+            APP_START_ECO_DELAYED.slice(4, -4),
+        )
+        // resume the same cycle: delay untouched, resume mode
+        assert.equal(
+            hex(buildF026Start({ course: 0x19, dryLevel: 0x01, delay: 0xff, options: 0x02, mode: 0x01 })),
+            APP_RESUME_ECO.slice(4, -4),
+        )
+    })
+
+    test('staged cycle: configure in HA, then start', () => {
+        const { ha, thinq, dev } = makeDevice()
+        thinq.resetRecorder()
+        dev.setProperty('stage_program', 'Eco')
+        dev.setProperty('stage_dry_level', 'Energy save')
+        dev.setProperty('stage_delay', '3')
+        dev.setProperty('stage_anti_crease', 'ON')
+        assert.equal(thinq.outbox.length, 0, 'staging alone sends nothing')
+        assert.equal(ha.devices[DEVICE_ID].properties.stage_program, 'Eco')
+
+        dev.setProperty('start', '')
+        assert.equal(hex(thinq.outbox[0]), APP_START_ECO_DELAYED)
+    })
+
+    test('pause and resume', () => {
+        const { thinq, dev } = makeDevice()
+        thinq.resetRecorder()
+        dev.setProperty('pause', '')
+        assert.equal(hex(thinq.outbox[0]), APP_PAUSE)
+
+        thinq.resetRecorder()
+        dev.setProperty('stage_program', 'Eco')
+        dev.setProperty('stage_dry_level', 'Energy save')
+        dev.setProperty('stage_anti_crease', 'ON')
+        dev.setProperty('resume', '')
+        assert.equal(hex(thinq.outbox[0]), APP_RESUME_ECO, 'resume keeps the delay untouched')
+    })
+
+    test('resume falls back to the running configuration reported by the dryer', () => {
+        const { thinq, dev } = makeDevice()
+        // the appliance reports Eco / energy save / anti-crease on
+        thinq.emit('data', SAMPLE_DRYING_ECO_ANTICREASE)
+        thinq.resetRecorder()
+        dev.setProperty('resume', '')
+        assert.equal(hex(thinq.outbox[0]), APP_RESUME_ECO)
+    })
+
+    test('start without any known course emits no packet', () => {
+        const { thinq, dev } = makeDevice()
+        thinq.resetRecorder()
+        dev.setProperty('start', '')
         assert.equal(thinq.outbox.length, 0)
     })
 
