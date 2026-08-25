@@ -62,6 +62,10 @@ describe(MODEL_ID, () => {
             'temperature',
             'energy',
             'staged_cc',
+            'process_state',
+            'remote_start',
+            'error',
+            'error_message',
         ]) {
             assert.ok(components[c], `component ${c} present`)
         }
@@ -136,6 +140,47 @@ describe(MODEL_ID, () => {
         thinq.emit('data', buf('AA0B303E0000000001A5BB'))
         assert.equal(ha.devices[DEVICE_ID].properties.temperature, 52.8)
         assert.equal(ha.devices[DEVICE_ID].properties.energy, 0)
+    })
+
+    // Synthetic 30EB blocks (checksummed) — no error capture exists, layout per
+    // anszom's field decode in upstream issue #33: b[0]=state (5=Error), b[6]=error code.
+    const SAMPLE_ERROR_DOOR = buf('AA2130EB00190500000000000F00000000000000000000000000000000000046BB')
+    const SAMPLE_ERROR_TE1 = buf('AA2130EB00190100000000000100000000000000000000000000000000000054BB')
+
+    test('error code decodes to the error entities and the Error state', () => {
+        const { ha, thinq } = makeDevice()
+        thinq.emit('data', SAMPLE_ERROR_DOOR)
+        let props = ha.devices[DEVICE_ID].properties
+        assert.equal(props.status, 'Error')
+        assert.equal(props.error, 'ON')
+        assert.equal(props.error_message, 'DOOR')
+
+        thinq.emit('data', SAMPLE_ERROR_TE1)
+        props = ha.devices[DEVICE_ID].properties
+        assert.equal(props.error_message, 'TE1')
+
+        thinq.emit('data', SAMPLE_IDLE)
+        props = ha.devices[DEVICE_ID].properties
+        assert.equal(props.error, 'OFF')
+        assert.equal(props.error_message, 'None')
+    })
+
+    test('process state and remote-start flag while drying', () => {
+        const { ha, thinq } = makeDevice()
+        // app-started drying: b[9]=0x02 (Dry phase), b[15] bit 0x01 set (remote start armed)
+        thinq.emit('data', SAMPLE_DRYING_MIXED)
+        const props = ha.devices[DEVICE_ID].properties
+        assert.equal(props.process_state, 'Dry')
+        assert.equal(props.remote_start, 'ON')
+    })
+
+    test('process state reads "-" outside a running cycle', () => {
+        const { ha, thinq } = makeDevice()
+        // course staged but not started: b[9] already reads 0x02, which is meaningless here
+        thinq.emit('data', SAMPLE_SELECT_COTTON)
+        const props = ha.devices[DEVICE_ID].properties
+        assert.equal(props.process_state, '-')
+        assert.equal(props.remote_start, 'OFF')
     })
 
     test('cycle markers (3072) are ignored', () => {

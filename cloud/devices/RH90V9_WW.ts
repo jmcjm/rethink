@@ -16,7 +16,17 @@ export const STATES = [
     'Drying',
     'Paused',
     'Done', // includes the cooling phase after the heater stops
+    'Error',
 ]
+
+// Error codes at status block byte 6; enum published by anszom in upstream issue #33
+// (TE=thermistor, CE=compressor, LE=motor, DOOR=door open). LE3 appears twice there.
+const ERROR_NAMES =
+    'TE1 TE2 TE3 TE4 TE5 TE6 CE1 CE2 HE1 E1 E3 E4 DRAINMOTOR EMPTYWATER DOOR ' +
+    'FILTERCLOGGING NOFILTER EEPROM F1 LE2 AE C2 C3 C4 C5 C6 C7 C8 PSE LE1 ' +
+    'B1 B2 B3 B4 B5 B6 DE4 EP LE3 FE1 LE3 DE2'
+export const ERRORS: Record<number, string> = { 0: 'None' }
+ERROR_NAMES.split(' ').forEach((name, i) => (ERRORS[i + 1] = name))
 
 export const COURSES: Record<number, string> = {
     0x01: 'Deodoration', // downloadable-only base, no dial slot
@@ -39,6 +49,20 @@ export const COURSES: Record<number, string> = {
 export const DRY_LEVELS: Record<number, string> = {
     0x01: 'Energy save',
     0x03: 'Time save',
+}
+
+// Cycle phase at status block byte 9. The byte holds a stale value while the dryer is
+// not running (a freshly staged course already reads 2), so it is only meaningful in
+// the Drying/Paused states. Mapping from the modelJson processState enum.
+export const PROCESS_STATES: Record<number, string> = {
+    0: 'Detecting',
+    1: 'Steam',
+    2: 'Dry',
+    3: 'Dry',
+    4: 'Dry',
+    5: 'Cooling',
+    6: 'Anti-crease',
+    7: 'End',
 }
 
 export const DRYNESS_LEVELS: Record<number, string> = {
@@ -244,6 +268,38 @@ export default class Device extends AABBDevice {
                         state_class: 'total_increasing',
                         unit_of_measurement: 'Wh',
                     },
+                    process_state: {
+                        platform: 'sensor',
+                        unique_id: '$deviceid-process_state',
+                        state_topic: '$this/process_state',
+                        name: 'Process',
+                        icon: 'mdi:cog-outline',
+                        device_class: 'enum',
+                        options: ['-', ...new Set(Object.values(PROCESS_STATES))],
+                    },
+                    remote_start: {
+                        platform: 'binary_sensor',
+                        unique_id: '$deviceid-remote_start',
+                        state_topic: '$this/remote_start',
+                        name: 'Remote start',
+                        icon: 'mdi:remote',
+                    },
+                    error: {
+                        platform: 'binary_sensor',
+                        unique_id: '$deviceid-error',
+                        state_topic: '$this/error',
+                        name: 'Error',
+                        device_class: 'problem',
+                        entity_category: 'diagnostic',
+                    },
+                    error_message: {
+                        platform: 'sensor',
+                        unique_id: '$deviceid-error_message',
+                        state_topic: '$this/error_message',
+                        name: 'Error code',
+                        icon: 'mdi:alert-circle-outline',
+                        entity_category: 'diagnostic',
+                    },
                     staged_cc: {
                         platform: 'sensor',
                         unique_id: '$deviceid-staged_cc',
@@ -379,10 +435,13 @@ export default class Device extends AABBDevice {
         const remaining = b[1] * 60 + b[2]
         const initial = b[3] * 60 + b[4]
         const course = b[5]
+        const errorCode = b[6]
         const drynessLevel = b[7]
         const dryLevel = b[8]
+        const processState = b[9]
         const delayRemaining = b[12] * 60 + b[13]
         const options = b[14]
+        const remoteStart = b[15]
         const cc = b[23]
 
         this.lastStatus = { course, dryLevel, options }
@@ -397,6 +456,15 @@ export default class Device extends AABBDevice {
             'dryness_level',
             DRYNESS_LEVELS[drynessLevel] ?? `unknown (0x${drynessLevel.toString(16)})`,
         )
+        this.publishProperty(
+            'process_state',
+            state === 2 || state === 3
+                ? (PROCESS_STATES[processState] ?? `unknown (0x${processState.toString(16)})`)
+                : '-',
+        )
+        this.publishProperty('remote_start', remoteStart & 0x01 ? 'ON' : 'OFF')
+        this.publishProperty('error', errorCode ? 'ON' : 'OFF')
+        this.publishProperty('error_message', ERRORS[errorCode] ?? `unknown (0x${errorCode.toString(16)})`)
         this.publishProperty('anti_crease', options & 0x02 ? 'ON' : 'OFF')
         this.publishProperty('delay_active', options & 0x01 ? 'ON' : 'OFF')
         this.publishProperty('delay_remaining', delayRemaining)
