@@ -62,6 +62,12 @@ describe(MODEL_ID, () => {
             'temperature',
             'energy',
             'staged_cc',
+            'power_on',
+            'process_state',
+            'remote_start',
+            'error',
+            'error_message',
+            'stage_dryness',
         ]) {
             assert.ok(components[c], `component ${c} present`)
         }
@@ -138,6 +144,47 @@ describe(MODEL_ID, () => {
         assert.equal(ha.devices[DEVICE_ID].properties.energy, 0)
     })
 
+    // Synthetic 30EB blocks (checksummed) — no error capture exists, layout per
+    // anszom's field decode in upstream issue #33: b[0]=state (5=Error), b[6]=error code.
+    const SAMPLE_ERROR_DOOR = buf('AA2130EB00190500000000000F00000000000000000000000000000000000046BB')
+    const SAMPLE_ERROR_TE1 = buf('AA2130EB00190100000000000100000000000000000000000000000000000054BB')
+
+    test('error code decodes to the error entities and the Error state', () => {
+        const { ha, thinq } = makeDevice()
+        thinq.emit('data', SAMPLE_ERROR_DOOR)
+        let props = ha.devices[DEVICE_ID].properties
+        assert.equal(props.status, 'Error')
+        assert.equal(props.error, 'ON')
+        assert.equal(props.error_message, 'DOOR')
+
+        thinq.emit('data', SAMPLE_ERROR_TE1)
+        props = ha.devices[DEVICE_ID].properties
+        assert.equal(props.error_message, 'TE1')
+
+        thinq.emit('data', SAMPLE_IDLE)
+        props = ha.devices[DEVICE_ID].properties
+        assert.equal(props.error, 'OFF')
+        assert.equal(props.error_message, 'None')
+    })
+
+    test('process state and remote-start flag while drying', () => {
+        const { ha, thinq } = makeDevice()
+        // app-started drying: b[9]=0x02 (Dry phase), b[15] bit 0x01 set (remote start armed)
+        thinq.emit('data', SAMPLE_DRYING_MIXED)
+        const props = ha.devices[DEVICE_ID].properties
+        assert.equal(props.process_state, 'Dry')
+        assert.equal(props.remote_start, 'ON')
+    })
+
+    test('process state reads "-" outside a running cycle', () => {
+        const { ha, thinq } = makeDevice()
+        // course staged but not started: b[9] already reads 0x02, which is meaningless here
+        thinq.emit('data', SAMPLE_SELECT_COTTON)
+        const props = ha.devices[DEVICE_ID].properties
+        assert.equal(props.process_state, '-')
+        assert.equal(props.remote_start, 'OFF')
+    })
+
     test('cycle markers (3072) are ignored', () => {
         const { ha, thinq } = makeDevice()
         thinq.emit('data', SAMPLE_IDLE)
@@ -161,6 +208,28 @@ describe(MODEL_ID, () => {
         assert.equal(hex(thinq.outbox[0]), WRITE_POWER_OFF)
     })
 
+    const WRITE_POWER_ON = 'AA08F02A010098BB'
+
+    test('power_on stages the last downloaded course as a wake, then sends F02A', async () => {
+        const { thinq, dev } = makeDevice()
+        thinq.emit('data', SAMPLE_IDLE) // CC echo 0x70 (Economic Dry)
+        thinq.resetRecorder()
+        dev.setProperty('power_on', '')
+        assert.equal(thinq.outbox.length, 1, 'wake F025 goes out first')
+        assert.equal(hex(thinq.outbox[0]), 'AA1DF025031500019600000000000000197000000003000000000042BB')
+        await new Promise((resolve) => setTimeout(resolve, 600))
+        assert.equal(thinq.outbox.length, 2)
+        assert.equal(hex(thinq.outbox[1]), WRITE_POWER_ON)
+    })
+
+    test('power_on without a known downloaded course sends F02A alone', () => {
+        const { thinq, dev } = makeDevice()
+        thinq.resetRecorder()
+        dev.setProperty('power_on', '')
+        assert.equal(thinq.outbox.length, 1)
+        assert.equal(hex(thinq.outbox[0]), WRITE_POWER_ON)
+    })
+
     test('staging a downloadable course reproduces the app-captured F025 packets', () => {
         // Raw packets the ThinQ app sent, verbatim from
         // captures_sessions/dryer_capture_2026-04-19_economic-dry_2h30m.log
@@ -180,6 +249,29 @@ describe(MODEL_ID, () => {
             assert.equal(thinq.outbox.length, 1, `${name} sends one packet`)
             assert.equal(hex(thinq.outbox[0]), packet, name)
         }
+    })
+
+    test('courses adopted from alexw23 stage with our capture-proven F025 layout', () => {
+        // Parameters from alexw23's PR anszom/rethink#55 (sourced from the LG modelJson),
+        // serialized with the layout our own captures pinned (inner[2] stays 0x03).
+        const expected: Record<string, string> = {
+            'Rainy Day': 'AA1DF025031500031E000000000000000E69000000000000000000D9BB',
+            'Super Dry': 'AA1DF02503150003A000000000000000196F00000004000000000076BB',
+        }
+        for (const [name, packet] of Object.entries(expected)) {
+            const { thinq, dev } = makeDevice()
+            thinq.resetRecorder()
+            dev.setProperty('stage_course', name)
+            assert.equal(thinq.outbox.length, 1, `${name} sends one packet`)
+            assert.equal(hex(thinq.outbox[0]), packet, name)
+        }
+    })
+
+    test('every downloadable course resolves its CC echo by name', () => {
+        // Small Load (0x6C) used to be missing from the CC name table.
+        const { ha, thinq } = makeDevice()
+        thinq.emit('data', buf('AA2130EB001901000000000000000000000000000000000000000000006C0039BB'))
+        assert.equal(ha.devices[DEVICE_ID].properties.staged_cc, 'Small Load')
     })
 
     test('staging echoes the selection and rejects unknown courses', () => {
@@ -249,6 +341,27 @@ describe(MODEL_ID, () => {
 
         dev.setProperty('start', '')
         assert.equal(hex(thinq.outbox[0]), APP_START_ECO_DELAYED)
+    })
+
+    test('F026 dryness byte follows the per-course schema', () => {
+        // Warm Air supports no dryness levels, so byte 3 must drop to 0x00 — the 0x03 our
+        // captures pinned is Cupboard, the default of the courses the app happened to start.
+        const { thinq, dev } = makeDevice()
+        thinq.resetRecorder()
+        dev.setProperty('stage_program', 'Warm Air')
+        dev.setProperty('stage_dry_level', 'Energy save')
+        dev.setProperty('start', '')
+        assert.equal(hex(thinq.outbox[0]), 'AA14F0260E00010000000000000003000000B3BB')
+    })
+
+    test('staged dryness overrides the schema default', () => {
+        const { thinq, dev } = makeDevice()
+        thinq.resetRecorder()
+        dev.setProperty('stage_program', 'Cotton')
+        dev.setProperty('stage_dry_level', 'Time save')
+        dev.setProperty('stage_dryness', 'Extra')
+        dev.setProperty('start', '')
+        assert.equal(hex(thinq.outbox[0]), 'AA14F0260704030000000000000003000000B0BB')
     })
 
     test('pause and resume', () => {

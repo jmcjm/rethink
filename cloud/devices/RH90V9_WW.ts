@@ -16,7 +16,17 @@ export const STATES = [
     'Drying',
     'Paused',
     'Done', // includes the cooling phase after the heater stops
+    'Error',
 ]
+
+// Error codes at status block byte 6; enum published by anszom in upstream issue #33
+// (TE=thermistor, CE=compressor, LE=motor, DOOR=door open). LE3 appears twice there.
+const ERROR_NAMES =
+    'TE1 TE2 TE3 TE4 TE5 TE6 CE1 CE2 HE1 E1 E3 E4 DRAINMOTOR EMPTYWATER DOOR ' +
+    'FILTERCLOGGING NOFILTER EEPROM F1 LE2 AE C2 C3 C4 C5 C6 C7 C8 PSE LE1 ' +
+    'B1 B2 B3 B4 B5 B6 DE4 EP LE3 FE1 LE3 DE2'
+export const ERRORS: Record<number, string> = { 0: 'None' }
+ERROR_NAMES.split(' ').forEach((name, i) => (ERRORS[i + 1] = name))
 
 export const COURSES: Record<number, string> = {
     0x01: 'Deodoration', // downloadable-only base, no dial slot
@@ -32,8 +42,38 @@ export const COURSES: Record<number, string> = {
     0x0c: 'Rack Dry',
     0x0e: 'Warm Air',
     0x10: 'Allergy Care',
+    0x12: 'Condenser Care',
     0x13: 'Drum Clean',
     0x19: 'Eco',
+}
+
+// Valid option sets per course, from the modelJson course schema in alexw23's
+// implementation (upstream PR #55). An empty `dryness` list means the course has no
+// dryness selection and F026 byte 3 stays 0 — the constant 0x03 our captures showed
+// is just Cupboard, the default of every course the app happened to start.
+export interface CourseSchema {
+    dryness: number[]
+    defaultDryness: number
+    dryLevels: number[]
+    defaultDryLevel: number
+}
+
+export const COURSE_SCHEMA: Record<number, CourseSchema> = {
+    0x02: { dryness: [], defaultDryness: 0, dryLevels: [0x03], defaultDryLevel: 0x03 },
+    0x04: { dryness: [], defaultDryness: 0, dryLevels: [0x03], defaultDryLevel: 0x03 },
+    0x05: { dryness: [0x01, 0x03], defaultDryness: 0x03, dryLevels: [0x01, 0x03], defaultDryLevel: 0x03 },
+    0x06: { dryness: [0x01, 0x03, 0x04], defaultDryness: 0x03, dryLevels: [0x01, 0x03], defaultDryLevel: 0x03 },
+    0x07: { dryness: [0x01, 0x03, 0x04], defaultDryness: 0x03, dryLevels: [0x03], defaultDryLevel: 0x03 },
+    0x08: { dryness: [], defaultDryness: 0, dryLevels: [0x01], defaultDryLevel: 0x01 },
+    0x09: { dryness: [], defaultDryness: 0, dryLevels: [0x03], defaultDryLevel: 0x03 },
+    0x0a: { dryness: [], defaultDryness: 0, dryLevels: [0x01], defaultDryLevel: 0x01 },
+    0x0b: { dryness: [], defaultDryness: 0, dryLevels: [0x01], defaultDryLevel: 0x01 },
+    0x0c: { dryness: [], defaultDryness: 0, dryLevels: [0x01], defaultDryLevel: 0x01 },
+    0x0e: { dryness: [], defaultDryness: 0, dryLevels: [0x01, 0x03], defaultDryLevel: 0x01 },
+    0x10: { dryness: [], defaultDryness: 0, dryLevels: [0x03], defaultDryLevel: 0x03 },
+    0x12: { dryness: [], defaultDryness: 0, dryLevels: [0x03], defaultDryLevel: 0x03 },
+    0x13: { dryness: [], defaultDryness: 0, dryLevels: [0x03], defaultDryLevel: 0x03 },
+    0x19: { dryness: [0x01, 0x03, 0x04], defaultDryness: 0x03, dryLevels: [0x01, 0x03], defaultDryLevel: 0x01 },
 }
 
 export const DRY_LEVELS: Record<number, string> = {
@@ -41,20 +81,25 @@ export const DRY_LEVELS: Record<number, string> = {
     0x03: 'Time save',
 }
 
+// Cycle phase at status block byte 9. The byte holds a stale value while the dryer is
+// not running (a freshly staged course already reads 2), so it is only meaningful in
+// the Drying/Paused states. Mapping from the modelJson processState enum.
+export const PROCESS_STATES: Record<number, string> = {
+    0: 'Detecting',
+    1: 'Steam',
+    2: 'Dry',
+    3: 'Dry',
+    4: 'Dry',
+    5: 'Cooling',
+    6: 'Anti-crease',
+    7: 'End',
+}
+
 export const DRYNESS_LEVELS: Record<number, string> = {
     0x00: 'Sensor', // programs with fixed duration or sensor-based end detection
     0x01: 'Iron',
     0x03: 'Cupboard',
     0x04: 'Extra',
-}
-
-// Custom-course IDs downloaded from the ThinQ app; the last downloaded CC is echoed at
-// status block byte 23 and persists across power cycles.
-export const CC_NAMES: Record<number, string> = {
-    0x65: 'Baby Care',
-    0x6b: 'Deodoration',
-    0x70: 'Economic Dry',
-    0x74: 'Full Size Load',
 }
 
 export interface F025Params {
@@ -83,16 +128,34 @@ export function buildF025SetCourse(p: F025Params): Buffer {
     return buf
 }
 
-// Downloadable courses captured from the ThinQ app (2026-04-19 and 2026-07-27 sessions).
-// The appliance only accepts course definitions it already holds, so this list can only
-// grow by capturing another app download — the fields are not freely composable.
+// Downloadable courses. The first five are byte-for-byte from our own ThinQ app captures
+// (2026-04-19 and 2026-07-27 sessions); the rest carry the modelJson SmartCourse defaults
+// from alexw23's independent implementation (upstream PR #55) — his capture-confirmed
+// values match ours exactly where the sets overlap (Small Load, Economic Dry, Baby Care,
+// Full Size Load), so the remaining entries are trusted with the same serialization.
 export const DOWNLOADABLE_COURSES: Record<string, F025Params> = {
     'Economic Dry': { dryLevel: 0x01, duration: 150, base: 0x19, cc: 0x70, dryness: 0x03 },
     'Baby Care': { dryLevel: 0x03, duration: 130, base: 0x02, cc: 0x65, dryness: 0x00 },
     Deodoration: { dryLevel: 0x03, duration: 39, base: 0x01, cc: 0x6b, dryness: 0x00 },
     'Full Size Load': { dryLevel: 0x03, duration: 160, base: 0x19, cc: 0x74, dryness: 0x04 },
     'Small Load': { dryLevel: 0x03, duration: 50, base: 0x0e, cc: 0x6c, dryness: 0x00 },
+    'Gym Clothes': { dryLevel: 0x01, duration: 60, base: 0x08, cc: 0x66, dryness: 0x00 },
+    Blanket: { dryLevel: 0x03, duration: 165, base: 0x04, cc: 0x67, dryness: 0x00 },
+    'Blanket Refresh': { dryLevel: 0x03, duration: 30, base: 0x00, cc: 0x68, dryness: 0x00 },
+    'Rainy Day': { dryLevel: 0x03, duration: 30, base: 0x0e, cc: 0x69, dryness: 0x00 },
+    'Single Garments': { dryLevel: 0x03, duration: 40, base: 0x0e, cc: 0x6a, dryness: 0x00 },
+    Lingerie: { dryLevel: 0x01, duration: 50, base: 0x0a, cc: 0x6d, dryness: 0x00 },
+    'Easy Ironing': { dryLevel: 0x01, duration: 110, base: 0x19, cc: 0x6e, dryness: 0x01 },
+    'Super Dry': { dryLevel: 0x03, duration: 160, base: 0x19, cc: 0x6f, dryness: 0x04 },
+    'Big Size Item': { dryLevel: 0x03, duration: 165, base: 0x04, cc: 0x71, dryness: 0x00 },
+    'Minimize Wrinkles': { dryLevel: 0x03, duration: 130, base: 0x19, cc: 0x72, dryness: 0x03 },
+    'Shoes / Fabric Doll': { dryLevel: 0x01, duration: 180, base: 0x0c, cc: 0x73, dryness: 0x00 },
 }
+
+// Custom-course IDs echoed at status block byte 23; the echo persists across power cycles.
+export const CC_NAMES: Record<number, string> = Object.fromEntries(
+    Object.entries(DOWNLOADABLE_COURSES).map(([name, p]) => [p.cc, name]),
+)
 
 export const START_MODE = 0x03 // start a cycle from scratch
 export const RESUME_MODE = 0x01 // resume after a pause
@@ -101,6 +164,7 @@ export const DELAY_UNCHANGED = 0xff // leave the delay timer as it is
 export interface F026Params {
     course: number
     dryLevel: number
+    dryness?: number // see DRYNESS_LEVELS; defaults to 0x03 (Cupboard), matching captures
     duration?: number // minutes; 0 lets the dryer pick the course default
     delay?: number // hours until the cycle ends; DELAY_UNCHANGED keeps the current setting
     options?: number // bitfield, 0x02 = anti-crease
@@ -111,15 +175,17 @@ export interface F026Params {
 // washer uses, contrary to older documentation claiming F026 only powers the dryer off.
 // (That behaviour comes from sending a malformed payload, which is what `power_off` below
 // still does deliberately.) 16-byte inner payload:
-// F0 26 [course] 03 [dryLevel] [duration] 00 00 [delay] 00 00 [options] [mode] 00 00 00
+// F0 26 [course] [dryness] [dryLevel] [duration] 00 00 [delay] 00 00 [options] [mode] 00 00 00
 // Field mapping verified 2026-07-27 against live ThinQ app captures of a start, a start
-// with a 3 h delayed end plus anti-crease, and a resume after pause.
+// with a 3 h delayed end plus anti-crease, and a resume after pause. Byte 3 read as a
+// constant 0x03 in every capture; alexw23's PR #55 identifies it as the dryness level
+// (0x03 = Cupboard, the default of each captured course), which fits all our packets.
 export function buildF026Start(p: F026Params): Buffer {
     const buf = Buffer.alloc(16)
     buf[0] = 0xf0
     buf[1] = 0x26
     buf[2] = p.course
-    buf[3] = 0x03
+    buf[3] = p.dryness ?? 0x03
     buf[4] = p.dryLevel
     buf[5] = p.duration ?? 0
     buf[8] = p.delay ?? 0
@@ -154,6 +220,14 @@ export default class Device extends AABBDevice {
                         command_topic: '$this/power_off/set',
                         payload_press: '',
                         name: 'Power off',
+                        icon: 'mdi:power',
+                    },
+                    power_on: {
+                        platform: 'button',
+                        unique_id: '$deviceid-power_on',
+                        command_topic: '$this/power_on/set',
+                        payload_press: '',
+                        name: 'Power on',
                         icon: 'mdi:power',
                     },
                     status: {
@@ -244,6 +318,38 @@ export default class Device extends AABBDevice {
                         state_class: 'total_increasing',
                         unit_of_measurement: 'Wh',
                     },
+                    process_state: {
+                        platform: 'sensor',
+                        unique_id: '$deviceid-process_state',
+                        state_topic: '$this/process_state',
+                        name: 'Process',
+                        icon: 'mdi:cog-outline',
+                        device_class: 'enum',
+                        options: ['-', ...new Set(Object.values(PROCESS_STATES))],
+                    },
+                    remote_start: {
+                        platform: 'binary_sensor',
+                        unique_id: '$deviceid-remote_start',
+                        state_topic: '$this/remote_start',
+                        name: 'Remote start',
+                        icon: 'mdi:remote',
+                    },
+                    error: {
+                        platform: 'binary_sensor',
+                        unique_id: '$deviceid-error',
+                        state_topic: '$this/error',
+                        name: 'Error',
+                        device_class: 'problem',
+                        entity_category: 'diagnostic',
+                    },
+                    error_message: {
+                        platform: 'sensor',
+                        unique_id: '$deviceid-error_message',
+                        state_topic: '$this/error_message',
+                        name: 'Error code',
+                        icon: 'mdi:alert-circle-outline',
+                        entity_category: 'diagnostic',
+                    },
                     staged_cc: {
                         platform: 'sensor',
                         unique_id: '$deviceid-staged_cc',
@@ -279,6 +385,15 @@ export default class Device extends AABBDevice {
                         name: 'Staged: Dry level',
                         icon: 'mdi:speedometer',
                         options: Object.values(DRY_LEVELS),
+                    },
+                    stage_dryness: {
+                        platform: 'select',
+                        unique_id: '$deviceid-stage_dryness',
+                        state_topic: '$this/stage_dryness',
+                        command_topic: '$this/stage_dryness/set',
+                        name: 'Staged: Dryness',
+                        icon: 'mdi:water-percent',
+                        options: Object.values(DRYNESS_LEVELS),
                     },
                     stage_delay: {
                         platform: 'number',
@@ -379,13 +494,17 @@ export default class Device extends AABBDevice {
         const remaining = b[1] * 60 + b[2]
         const initial = b[3] * 60 + b[4]
         const course = b[5]
+        const errorCode = b[6]
         const drynessLevel = b[7]
         const dryLevel = b[8]
+        const processState = b[9]
         const delayRemaining = b[12] * 60 + b[13]
         const options = b[14]
+        const remoteStart = b[15]
         const cc = b[23]
 
         this.lastStatus = { course, dryLevel, options }
+        if (cc) this.lastCC = cc
 
         this.publishProperty('power', state > 0 ? 'ON' : 'OFF')
         this.publishProperty('status', STATES[state] ?? 'unknown')
@@ -397,6 +516,15 @@ export default class Device extends AABBDevice {
             'dryness_level',
             DRYNESS_LEVELS[drynessLevel] ?? `unknown (0x${drynessLevel.toString(16)})`,
         )
+        this.publishProperty(
+            'process_state',
+            state === 2 || state === 3
+                ? (PROCESS_STATES[processState] ?? `unknown (0x${processState.toString(16)})`)
+                : '-',
+        )
+        this.publishProperty('remote_start', remoteStart & 0x01 ? 'ON' : 'OFF')
+        this.publishProperty('error', errorCode ? 'ON' : 'OFF')
+        this.publishProperty('error_message', ERRORS[errorCode] ?? `unknown (0x${errorCode.toString(16)})`)
         this.publishProperty('anti_crease', options & 0x02 ? 'ON' : 'OFF')
         this.publishProperty('delay_active', options & 0x01 ? 'ON' : 'OFF')
         this.publishProperty('delay_remaining', delayRemaining)
@@ -407,7 +535,17 @@ export default class Device extends AABBDevice {
     // configured on the appliance itself rather than from HA
     private lastStatus = { course: 0, dryLevel: 0x01, options: 0 }
 
-    private staged: { course?: string; dryLevel?: string; delay?: number; antiCrease?: boolean } = {}
+    // last downloadable-course echo (status byte 23); survives power cycles on the
+    // appliance, so it is the safest F025 payload for the power-on wake sequence
+    private lastCC = 0
+
+    private staged: {
+        course?: string
+        dryLevel?: string
+        dryness?: string
+        delay?: number
+        antiCrease?: boolean
+    } = {}
 
     private stagedF026(mode: number): Buffer | undefined {
         const courseName = this.staged.course
@@ -421,11 +559,17 @@ export default class Device extends AABBDevice {
             ? Number(Object.entries(DRY_LEVELS).find(([, n]) => n === levelName)?.[0])
             : this.lastStatus.dryLevel
 
+        const drynessName = this.staged.dryness
+        const dryness = drynessName
+            ? Number(Object.entries(DRYNESS_LEVELS).find(([, n]) => n === drynessName)?.[0])
+            : COURSE_SCHEMA[course]?.defaultDryness
+
         const antiCrease = this.staged.antiCrease ?? !!(this.lastStatus.options & 0x02)
 
         return buildF026Start({
             course,
             dryLevel,
+            dryness,
             delay: mode === RESUME_MODE ? DELAY_UNCHANGED : (this.staged.delay ?? 0),
             options: antiCrease ? 0x02 : 0x00,
             mode,
@@ -437,6 +581,20 @@ export default class Device extends AABBDevice {
         // rejecting garbage, not a dedicated power command.
         if (prop === 'power_off') {
             this.send(Buffer.from('F026010100', 'hex'))
+            return
+        }
+
+        // F02A powers the dryer on, but a firmware idle lockout blocks it a few minutes
+        // after the last interaction; re-staging the last downloaded course via F025
+        // counts as interaction and lifts the gate (sequence found by alexw23, PR #55).
+        if (prop === 'power_on') {
+            const wake = Object.values(DOWNLOADABLE_COURSES).find((p) => p.cc === this.lastCC)
+            if (wake) {
+                this.send(buildF025SetCourse(wake))
+                setTimeout(() => this.send(Buffer.from('F02A0100', 'hex')), 500)
+            } else {
+                this.send(Buffer.from('F02A0100', 'hex'))
+            }
             return
         }
 
@@ -455,6 +613,7 @@ export default class Device extends AABBDevice {
             const key = prop.slice('stage_'.length)
             if (key === 'program') this.staged.course = mqttValue
             else if (key === 'dry_level') this.staged.dryLevel = mqttValue
+            else if (key === 'dryness') this.staged.dryness = mqttValue
             else if (key === 'delay') this.staged.delay = Number(mqttValue)
             else if (key === 'anti_crease') this.staged.antiCrease = mqttValue === 'ON'
             else return
