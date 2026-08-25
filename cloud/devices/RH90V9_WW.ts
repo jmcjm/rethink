@@ -42,8 +42,38 @@ export const COURSES: Record<number, string> = {
     0x0c: 'Rack Dry',
     0x0e: 'Warm Air',
     0x10: 'Allergy Care',
+    0x12: 'Condenser Care',
     0x13: 'Drum Clean',
     0x19: 'Eco',
+}
+
+// Valid option sets per course, from the modelJson course schema in alexw23's
+// implementation (upstream PR #55). An empty `dryness` list means the course has no
+// dryness selection and F026 byte 3 stays 0 — the constant 0x03 our captures showed
+// is just Cupboard, the default of every course the app happened to start.
+export interface CourseSchema {
+    dryness: number[]
+    defaultDryness: number
+    dryLevels: number[]
+    defaultDryLevel: number
+}
+
+export const COURSE_SCHEMA: Record<number, CourseSchema> = {
+    0x02: { dryness: [], defaultDryness: 0, dryLevels: [0x03], defaultDryLevel: 0x03 },
+    0x04: { dryness: [], defaultDryness: 0, dryLevels: [0x03], defaultDryLevel: 0x03 },
+    0x05: { dryness: [0x01, 0x03], defaultDryness: 0x03, dryLevels: [0x01, 0x03], defaultDryLevel: 0x03 },
+    0x06: { dryness: [0x01, 0x03, 0x04], defaultDryness: 0x03, dryLevels: [0x01, 0x03], defaultDryLevel: 0x03 },
+    0x07: { dryness: [0x01, 0x03, 0x04], defaultDryness: 0x03, dryLevels: [0x03], defaultDryLevel: 0x03 },
+    0x08: { dryness: [], defaultDryness: 0, dryLevels: [0x01], defaultDryLevel: 0x01 },
+    0x09: { dryness: [], defaultDryness: 0, dryLevels: [0x03], defaultDryLevel: 0x03 },
+    0x0a: { dryness: [], defaultDryness: 0, dryLevels: [0x01], defaultDryLevel: 0x01 },
+    0x0b: { dryness: [], defaultDryness: 0, dryLevels: [0x01], defaultDryLevel: 0x01 },
+    0x0c: { dryness: [], defaultDryness: 0, dryLevels: [0x01], defaultDryLevel: 0x01 },
+    0x0e: { dryness: [], defaultDryness: 0, dryLevels: [0x01, 0x03], defaultDryLevel: 0x01 },
+    0x10: { dryness: [], defaultDryness: 0, dryLevels: [0x03], defaultDryLevel: 0x03 },
+    0x12: { dryness: [], defaultDryness: 0, dryLevels: [0x03], defaultDryLevel: 0x03 },
+    0x13: { dryness: [], defaultDryness: 0, dryLevels: [0x03], defaultDryLevel: 0x03 },
+    0x19: { dryness: [0x01, 0x03, 0x04], defaultDryness: 0x03, dryLevels: [0x01, 0x03], defaultDryLevel: 0x01 },
 }
 
 export const DRY_LEVELS: Record<number, string> = {
@@ -72,15 +102,6 @@ export const DRYNESS_LEVELS: Record<number, string> = {
     0x04: 'Extra',
 }
 
-// Custom-course IDs downloaded from the ThinQ app; the last downloaded CC is echoed at
-// status block byte 23 and persists across power cycles.
-export const CC_NAMES: Record<number, string> = {
-    0x65: 'Baby Care',
-    0x6b: 'Deodoration',
-    0x70: 'Economic Dry',
-    0x74: 'Full Size Load',
-}
-
 export interface F025Params {
     dryLevel: number // 0x01=energy save, 0x03=time save
     duration: number // minutes, matches the TD the dryer reports at cycle start
@@ -107,16 +128,34 @@ export function buildF025SetCourse(p: F025Params): Buffer {
     return buf
 }
 
-// Downloadable courses captured from the ThinQ app (2026-04-19 and 2026-07-27 sessions).
-// The appliance only accepts course definitions it already holds, so this list can only
-// grow by capturing another app download — the fields are not freely composable.
+// Downloadable courses. The first five are byte-for-byte from our own ThinQ app captures
+// (2026-04-19 and 2026-07-27 sessions); the rest carry the modelJson SmartCourse defaults
+// from alexw23's independent implementation (upstream PR #55) — his capture-confirmed
+// values match ours exactly where the sets overlap (Small Load, Economic Dry, Baby Care,
+// Full Size Load), so the remaining entries are trusted with the same serialization.
 export const DOWNLOADABLE_COURSES: Record<string, F025Params> = {
     'Economic Dry': { dryLevel: 0x01, duration: 150, base: 0x19, cc: 0x70, dryness: 0x03 },
     'Baby Care': { dryLevel: 0x03, duration: 130, base: 0x02, cc: 0x65, dryness: 0x00 },
     Deodoration: { dryLevel: 0x03, duration: 39, base: 0x01, cc: 0x6b, dryness: 0x00 },
     'Full Size Load': { dryLevel: 0x03, duration: 160, base: 0x19, cc: 0x74, dryness: 0x04 },
     'Small Load': { dryLevel: 0x03, duration: 50, base: 0x0e, cc: 0x6c, dryness: 0x00 },
+    'Gym Clothes': { dryLevel: 0x01, duration: 60, base: 0x08, cc: 0x66, dryness: 0x00 },
+    Blanket: { dryLevel: 0x03, duration: 165, base: 0x04, cc: 0x67, dryness: 0x00 },
+    'Blanket Refresh': { dryLevel: 0x03, duration: 30, base: 0x00, cc: 0x68, dryness: 0x00 },
+    'Rainy Day': { dryLevel: 0x03, duration: 30, base: 0x0e, cc: 0x69, dryness: 0x00 },
+    'Single Garments': { dryLevel: 0x03, duration: 40, base: 0x0e, cc: 0x6a, dryness: 0x00 },
+    Lingerie: { dryLevel: 0x01, duration: 50, base: 0x0a, cc: 0x6d, dryness: 0x00 },
+    'Easy Ironing': { dryLevel: 0x01, duration: 110, base: 0x19, cc: 0x6e, dryness: 0x01 },
+    'Super Dry': { dryLevel: 0x03, duration: 160, base: 0x19, cc: 0x6f, dryness: 0x04 },
+    'Big Size Item': { dryLevel: 0x03, duration: 165, base: 0x04, cc: 0x71, dryness: 0x00 },
+    'Minimize Wrinkles': { dryLevel: 0x03, duration: 130, base: 0x19, cc: 0x72, dryness: 0x03 },
+    'Shoes / Fabric Doll': { dryLevel: 0x01, duration: 180, base: 0x0c, cc: 0x73, dryness: 0x00 },
 }
+
+// Custom-course IDs echoed at status block byte 23; the echo persists across power cycles.
+export const CC_NAMES: Record<number, string> = Object.fromEntries(
+    Object.entries(DOWNLOADABLE_COURSES).map(([name, p]) => [p.cc, name]),
+)
 
 export const START_MODE = 0x03 // start a cycle from scratch
 export const RESUME_MODE = 0x01 // resume after a pause
@@ -125,6 +164,7 @@ export const DELAY_UNCHANGED = 0xff // leave the delay timer as it is
 export interface F026Params {
     course: number
     dryLevel: number
+    dryness?: number // see DRYNESS_LEVELS; defaults to 0x03 (Cupboard), matching captures
     duration?: number // minutes; 0 lets the dryer pick the course default
     delay?: number // hours until the cycle ends; DELAY_UNCHANGED keeps the current setting
     options?: number // bitfield, 0x02 = anti-crease
@@ -135,15 +175,17 @@ export interface F026Params {
 // washer uses, contrary to older documentation claiming F026 only powers the dryer off.
 // (That behaviour comes from sending a malformed payload, which is what `power_off` below
 // still does deliberately.) 16-byte inner payload:
-// F0 26 [course] 03 [dryLevel] [duration] 00 00 [delay] 00 00 [options] [mode] 00 00 00
+// F0 26 [course] [dryness] [dryLevel] [duration] 00 00 [delay] 00 00 [options] [mode] 00 00 00
 // Field mapping verified 2026-07-27 against live ThinQ app captures of a start, a start
-// with a 3 h delayed end plus anti-crease, and a resume after pause.
+// with a 3 h delayed end plus anti-crease, and a resume after pause. Byte 3 read as a
+// constant 0x03 in every capture; alexw23's PR #55 identifies it as the dryness level
+// (0x03 = Cupboard, the default of each captured course), which fits all our packets.
 export function buildF026Start(p: F026Params): Buffer {
     const buf = Buffer.alloc(16)
     buf[0] = 0xf0
     buf[1] = 0x26
     buf[2] = p.course
-    buf[3] = 0x03
+    buf[3] = p.dryness ?? 0x03
     buf[4] = p.dryLevel
     buf[5] = p.duration ?? 0
     buf[8] = p.delay ?? 0
@@ -344,6 +386,15 @@ export default class Device extends AABBDevice {
                         icon: 'mdi:speedometer',
                         options: Object.values(DRY_LEVELS),
                     },
+                    stage_dryness: {
+                        platform: 'select',
+                        unique_id: '$deviceid-stage_dryness',
+                        state_topic: '$this/stage_dryness',
+                        command_topic: '$this/stage_dryness/set',
+                        name: 'Staged: Dryness',
+                        icon: 'mdi:water-percent',
+                        options: Object.values(DRYNESS_LEVELS),
+                    },
                     stage_delay: {
                         platform: 'number',
                         unique_id: '$deviceid-stage_delay',
@@ -488,7 +539,13 @@ export default class Device extends AABBDevice {
     // appliance, so it is the safest F025 payload for the power-on wake sequence
     private lastCC = 0
 
-    private staged: { course?: string; dryLevel?: string; delay?: number; antiCrease?: boolean } = {}
+    private staged: {
+        course?: string
+        dryLevel?: string
+        dryness?: string
+        delay?: number
+        antiCrease?: boolean
+    } = {}
 
     private stagedF026(mode: number): Buffer | undefined {
         const courseName = this.staged.course
@@ -502,11 +559,17 @@ export default class Device extends AABBDevice {
             ? Number(Object.entries(DRY_LEVELS).find(([, n]) => n === levelName)?.[0])
             : this.lastStatus.dryLevel
 
+        const drynessName = this.staged.dryness
+        const dryness = drynessName
+            ? Number(Object.entries(DRYNESS_LEVELS).find(([, n]) => n === drynessName)?.[0])
+            : COURSE_SCHEMA[course]?.defaultDryness
+
         const antiCrease = this.staged.antiCrease ?? !!(this.lastStatus.options & 0x02)
 
         return buildF026Start({
             course,
             dryLevel,
+            dryness,
             delay: mode === RESUME_MODE ? DELAY_UNCHANGED : (this.staged.delay ?? 0),
             options: antiCrease ? 0x02 : 0x00,
             mode,
@@ -550,6 +613,7 @@ export default class Device extends AABBDevice {
             const key = prop.slice('stage_'.length)
             if (key === 'program') this.staged.course = mqttValue
             else if (key === 'dry_level') this.staged.dryLevel = mqttValue
+            else if (key === 'dryness') this.staged.dryness = mqttValue
             else if (key === 'delay') this.staged.delay = Number(mqttValue)
             else if (key === 'anti_crease') this.staged.antiCrease = mqttValue === 'ON'
             else return
