@@ -66,6 +66,7 @@ describe(MODEL_ID, () => {
             'remote_start',
             'error',
             'error_message',
+            'power_on',
         ]) {
             assert.ok(components[c], `component ${c} present`)
         }
@@ -204,6 +205,28 @@ describe(MODEL_ID, () => {
         thinq.resetRecorder()
         dev.setProperty('power_off', '')
         assert.equal(hex(thinq.outbox[0]), WRITE_POWER_OFF)
+    })
+
+    const WRITE_POWER_ON = 'AA08F02A010098BB'
+
+    test('power_on stages the last downloaded course as a wake, then sends F02A', async () => {
+        const { thinq, dev } = makeDevice()
+        thinq.emit('data', SAMPLE_IDLE) // CC echo 0x70 (Economic Dry)
+        thinq.resetRecorder()
+        dev.setProperty('power_on', '')
+        assert.equal(thinq.outbox.length, 1, 'wake F025 goes out first')
+        assert.equal(hex(thinq.outbox[0]), 'AA1DF025031500019600000000000000197000000003000000000042BB')
+        await new Promise((resolve) => setTimeout(resolve, 600))
+        assert.equal(thinq.outbox.length, 2)
+        assert.equal(hex(thinq.outbox[1]), WRITE_POWER_ON)
+    })
+
+    test('power_on without a known downloaded course sends F02A alone', () => {
+        const { thinq, dev } = makeDevice()
+        thinq.resetRecorder()
+        dev.setProperty('power_on', '')
+        assert.equal(thinq.outbox.length, 1)
+        assert.equal(hex(thinq.outbox[0]), WRITE_POWER_ON)
     })
 
     test('staging a downloadable course reproduces the app-captured F025 packets', () => {

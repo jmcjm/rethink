@@ -180,6 +180,14 @@ export default class Device extends AABBDevice {
                         name: 'Power off',
                         icon: 'mdi:power',
                     },
+                    power_on: {
+                        platform: 'button',
+                        unique_id: '$deviceid-power_on',
+                        command_topic: '$this/power_on/set',
+                        payload_press: '',
+                        name: 'Power on',
+                        icon: 'mdi:power',
+                    },
                     status: {
                         platform: 'sensor',
                         unique_id: '$deviceid-status',
@@ -445,6 +453,7 @@ export default class Device extends AABBDevice {
         const cc = b[23]
 
         this.lastStatus = { course, dryLevel, options }
+        if (cc) this.lastCC = cc
 
         this.publishProperty('power', state > 0 ? 'ON' : 'OFF')
         this.publishProperty('status', STATES[state] ?? 'unknown')
@@ -474,6 +483,10 @@ export default class Device extends AABBDevice {
     // last known live configuration, used as the fallback when resuming a cycle that was
     // configured on the appliance itself rather than from HA
     private lastStatus = { course: 0, dryLevel: 0x01, options: 0 }
+
+    // last downloadable-course echo (status byte 23); survives power cycles on the
+    // appliance, so it is the safest F025 payload for the power-on wake sequence
+    private lastCC = 0
 
     private staged: { course?: string; dryLevel?: string; delay?: number; antiCrease?: boolean } = {}
 
@@ -505,6 +518,20 @@ export default class Device extends AABBDevice {
         // rejecting garbage, not a dedicated power command.
         if (prop === 'power_off') {
             this.send(Buffer.from('F026010100', 'hex'))
+            return
+        }
+
+        // F02A powers the dryer on, but a firmware idle lockout blocks it a few minutes
+        // after the last interaction; re-staging the last downloaded course via F025
+        // counts as interaction and lifts the gate (sequence found by alexw23, PR #55).
+        if (prop === 'power_on') {
+            const wake = Object.values(DOWNLOADABLE_COURSES).find((p) => p.cc === this.lastCC)
+            if (wake) {
+                this.send(buildF025SetCourse(wake))
+                setTimeout(() => this.send(Buffer.from('F02A0100', 'hex')), 500)
+            } else {
+                this.send(Buffer.from('F02A0100', 'hex'))
+            }
             return
         }
 
