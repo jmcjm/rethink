@@ -43,6 +43,7 @@ import RV13B6BSD_D_US_WIFI from './devices/RV13B6BSD_D_US_WIFI'
 import RV13B6ES_D_US_WIFI from './devices/RV13B6ES_D_US_WIFI'
 import RV13D4ASJW_D_US from './devices/RV13D4ASJW_D_US'
 import RC90U2_WW from './devices/RC90U2_WW'
+import RH90V9_WW from './devices/RH90V9_WW_remote'
 import RV13D5JSD_D_US from './devices/RV13D5JSD_D_US'
 import WTL_FXU_BDV_NA_01 from './devices/WTL_FXU_BDV_NA_01'
 import FAFXU25006 from './devices/FAFXU25006'
@@ -56,7 +57,6 @@ import Dev_1WPD6CMIDR__3 from './devices/1WPD6CMIDR__3'
 import WFV474PGV from './devices/WFV474PGV'
 import WLREL6323S from './devices/WLREL6323S'
 import D0211 from './devices/D0211'
-import RH90V9_WW from './devices/RH90V9_WW'
 import { Device as T1Device } from './thinq1/device'
 import { Device as T2Device } from './thinq2/device'
 import { type Connection } from './homeassistant'
@@ -129,7 +129,6 @@ const t2deviceTypes: Record<string, T2Factory> = {
     WLREL6323S, // LG LREL6323S single-oven electric range
     D0211, // LG ThinQ dishwasher (deviceType 204), DB365TXS / DBC435TSL.AASQEIS
     RC90U2_WW, // LG RC9DN9029 heat pump dryer (EU), same AABB dialect as the two dryers above but with the 25-byte EU record layout
-    ['RH90V9_WW']: RH90V9_WW, // LG heat-pump tumble dryer (EU)
 
     // aliases:
     RAC_0B0001_WW: RAC_056905_WW, // a different European variant (deviceType 401, RTK_RTL8720cm), same TLV handler
@@ -142,6 +141,7 @@ const t2deviceTypes: Record<string, T2Factory> = {
     RC90V9_WW: RC90U2_WW, // LG RC91V9EV2Q heat pump dryer, same records
     D2211: D0211, // LG XD3A25MB dishwasher (deviceType 204), same 0x18-byte records, checked against bridged LG cloud state
     RC90V9_AUS: RC90U2_WW, // LG DVH9-09B heat pump dryer (AU), same records, checked against bridged LG cloud state
+    RH90V9_WW, // LG RC10V9AV2W heat pump dryer, RC90U2_WW's records with two more courses
     '2RES1VE61NFWA': Dev_2RES1VE600FWC,
 }
 
