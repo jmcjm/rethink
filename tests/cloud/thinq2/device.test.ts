@@ -2,8 +2,9 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { Broker } from '@/cloud/mqtt-broker'
 import { Device, DeviceAcceptor, deployMetadata } from '@/cloud/thinq2/device'
-import type { ClipDeployMessage, DeployAppInfo } from '@/cloud/thinq2/clip'
+import { fromRxPacket, type ClipDeployMessage, type DeployAppInfo } from '@/cloud/thinq2/clip'
 import { allowExtendedType } from '@/util/casting'
+import { enableMockTimers, tickMockTimers } from '@/tests/helpers/timers'
 
 function deploy(appInfo: Partial<DeployAppInfo>): ClipDeployMessage {
     return {
@@ -111,7 +112,7 @@ describe('ThinQ2 device identity', () => {
     test('delivers the captured status message after captured provisioning', () => {
         const { acceptor, client, device } = connectDevice()
         let received: Buffer | undefined
-        device.once('data', (data) => (received = data))
+        device.once('rawPacket', (data) => (received = fromRxPacket(data)))
 
         acceptor.mqtt(`clip/message/devices/${deviceId}`, { ...STATUS_CAPTURE }, client)
 
@@ -121,7 +122,7 @@ describe('ThinQ2 device identity', () => {
     test('accepts a malformed payload id from the provisioned device topic', () => {
         const { acceptor, client, device } = connectDevice()
         let received: Buffer | undefined
-        device.once('data', (data) => (received = data))
+        device.once('rawPacket', (data) => (received = fromRxPacket(data)))
 
         // Deliberate synthetic mutation of the captured message's ID.
         acceptor.mqtt(`clip/message/devices/${deviceId}`, { ...STATUS_CAPTURE, did: deviceId.slice(1) }, client)
@@ -132,7 +133,7 @@ describe('ThinQ2 device identity', () => {
     test('rejects a wrong topic even when the payload id matches', () => {
         const { acceptor, client, device } = connectDevice()
         let received = false
-        device.once('data', () => (received = true))
+        device.once('rawPacket', () => (received = true))
 
         // Deliberate synthetic topic mismatch.
         acceptor.mqtt('clip/message/devices/some-other-device', { ...STATUS_CAPTURE }, client)
@@ -143,11 +144,119 @@ describe('ThinQ2 device identity', () => {
     test('rejects a wrong topic with a mismatched payload id', () => {
         const { acceptor, client, device } = connectDevice()
         let received = false
-        device.once('data', () => (received = true))
+        device.once('rawPacket', () => (received = true))
 
         // Deliberate synthetic topic and payload-ID mismatches.
         acceptor.mqtt('clip/message/devices/some-other-device', { ...STATUS_CAPTURE, did: 'another-device' }, client)
 
         assert.equal(received, false)
+    })
+})
+
+describe('newProvisioning', () => {
+    // The captured deploy stands in for a freshly paired device's preDeploy: only its command is changed,
+    // a deliberate synthetic mutation. DeviceAcceptor reads nothing but the command from the ack.
+    function provision() {
+        const broker = new Broker()
+        const acceptor = new DeviceAcceptor(broker)
+        const client = {} as any
+        const sent: { topic: string; message: Record<string, unknown> }[] = []
+        broker.on('publish', (packet, from) => {
+            if (!from) sent.push({ topic: packet.topic, message: JSON.parse(String(packet.payload)) })
+        })
+
+        const announce = (cmd: 'preDeploy' | 'deploy') =>
+            acceptor.mqtt(`clip/provisioning/devices/${deviceId}`, { ...structuredClone(DEPLOY_CAPTURE), cmd }, client)
+        const ack = () =>
+            acceptor.mqtt(
+                `clip/message/devices/${deviceId}`,
+                {
+                    mid: 1,
+                    did: deviceId,
+                    kind: DEPLOY_CAPTURE.kind,
+                    cmd: 'completeProvisioning_ack',
+                    type: 0,
+                    data: null,
+                },
+                client,
+            )
+        const newProvisioning = () => sent.filter((s) => s.message.cmd === 'newProvisioning')
+        return { acceptor, client, announce, ack, newProvisioning }
+    }
+
+    test('follows an answered preDeploy once, 4 s later, without waiting for the ack', (t) => {
+        enableMockTimers(t)
+        const { announce, ack, newProvisioning } = provision()
+
+        announce('preDeploy')
+        tickMockTimers(t, 3900)
+        assert.equal(newProvisioning().length, 0)
+        tickMockTimers(t, 100)
+        assert.deepEqual(newProvisioning(), [
+            {
+                topic: `lime/devices/${deviceId}`,
+                message: { did: deviceId, mid: 0, cmd: 'newProvisioning', type: 0, data: null },
+            },
+        ])
+
+        ack()
+        ack()
+        tickMockTimers(t, 8000)
+        assert.equal(newProvisioning().length, 1)
+    })
+
+    test('is not sent to a device that deploys', (t) => {
+        enableMockTimers(t)
+        const { announce, ack, newProvisioning } = provision()
+
+        announce('deploy')
+        ack()
+        tickMockTimers(t, 4000)
+        assert.equal(newProvisioning().length, 0)
+    })
+
+    test('is not sent after the client disconnects', (t) => {
+        enableMockTimers(t)
+        const { acceptor, client, announce, ack, newProvisioning } = provision()
+
+        announce('preDeploy')
+        ack()
+        tickMockTimers(t, 2000)
+        acceptor.disconnected(client)
+        tickMockTimers(t, 4000)
+        assert.equal(newProvisioning().length, 0)
+    })
+
+    test('a repeated preDeploy gets one more, 4 s after it', (t) => {
+        enableMockTimers(t)
+        t.mock.method(console, 'warn', () => {})
+        const { announce, newProvisioning } = provision()
+
+        announce('preDeploy')
+        tickMockTimers(t, 4000)
+        assert.equal(newProvisioning().length, 1)
+
+        announce('preDeploy')
+        tickMockTimers(t, 2000)
+        announce('preDeploy')
+        tickMockTimers(t, 3900)
+        assert.equal(newProvisioning().length, 1)
+        tickMockTimers(t, 100)
+        assert.equal(newProvisioning().length, 2)
+        tickMockTimers(t, 8000)
+        assert.equal(newProvisioning().length, 2)
+    })
+
+    test('a deploy following the preDeploy cancels it without a warning', (t) => {
+        enableMockTimers(t)
+        const warn = t.mock.method(console, 'warn', () => {})
+        const { announce, newProvisioning } = provision()
+
+        announce('preDeploy')
+        tickMockTimers(t, 2000)
+        announce('deploy')
+        tickMockTimers(t, 4000)
+        assert.equal(newProvisioning().length, 0)
+        assert.equal(warn.mock.callCount(), 0)
     })
 })

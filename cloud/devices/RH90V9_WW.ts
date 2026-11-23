@@ -639,7 +639,7 @@ export default class Device extends AABBDevice {
             let sum = 0
             for (let i = 0; i < packet.length - 2; i++) sum += packet[i]
             if (((sum & 0xff) ^ 0x55) !== packet[packet.length - 2]) return
-            this.thinq.send_packet(packet)
+            this.send_packet(packet)
             return
         }
     }
