@@ -139,6 +139,11 @@ export default class Device extends AABBDevice {
         return COURSES
     }
 
+    // Overridden by models whose panel labels the Eco Hybrid setting differently. Same constructor rule.
+    protected ecoHybrid(): Enum<string> {
+        return ECO_HYBRID
+    }
+
     constructor(HA: Connection, thinq: Thinq2Device, meta: Metadata) {
         super(HA, thinq, false)
         this.setConfig(
@@ -215,7 +220,7 @@ export default class Device extends AABBDevice {
                         name: 'Eco Hybrid',
                         icon: 'mdi:leaf',
                         device_class: 'enum',
-                        options: ECO_HYBRID.options,
+                        options: this.ecoHybrid().options,
                     },
                     remaining_time: {
                         platform: 'sensor',
@@ -317,7 +322,7 @@ export default class Device extends AABBDevice {
             isOff ? undefined : (courses.map(rec[SMART_COURSE_OFFSET]) ?? courses.map(rec[COURSE_OFFSET])),
         )
         this.publishProperty('dry_level', isOff ? undefined : DRY_LEVELS.map(rec[DRY_LEVEL_OFFSET]))
-        this.publishProperty('eco_hybrid', isOff ? undefined : ECO_HYBRID.map(rec[ECO_HYBRID_OFFSET]))
+        this.publishProperty('eco_hybrid', isOff ? undefined : this.ecoHybrid().map(rec[ECO_HYBRID_OFFSET]))
         this.publishProperty('remaining_time', isOff ? 0 : rec[REMAIN_HOUR_OFFSET] * 60 + rec[REMAIN_MIN_OFFSET])
         this.publishProperty('initial_time', isOff ? 0 : rec[INITIAL_HOUR_OFFSET] * 60 + rec[INITIAL_MIN_OFFSET])
         this.publishProperty('reserve_time', isOff ? 0 : rec[RESERVE_HOUR_OFFSET] * 60 + rec[RESERVE_MIN_OFFSET])
